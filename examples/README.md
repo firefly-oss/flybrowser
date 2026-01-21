@@ -46,6 +46,7 @@ python examples/01_basic_usage.py
 | `08_rest_api_client.py` | Using the REST API directly |
 | `09_llm_providers.py` | OpenAI, Anthropic, Gemini, Ollama |
 | `10_integrated_example.py` | All agents working together |
+| `11_jupyter_notebook.py` | Using FlyBrowser in Jupyter notebooks |
 
 ---
 

@@ -433,6 +433,57 @@ async def robust_automation():
 asyncio.run(robust_automation())
 ```
 
+## Using in Jupyter Notebooks
+
+Jupyter notebooks require special handling due to their built-in event loop. You have two options:
+
+### Option 1: Direct await (Recommended)
+
+Jupyter supports top-level `await` - just use it directly:
+
+```python path=null start=null
+# In a Jupyter cell
+from flybrowser import FlyBrowser
+
+browser = FlyBrowser(
+    llm_provider="openai",
+    llm_model="gpt-5.2"
+)
+
+await browser.start()
+await browser.goto("https://example.com")
+data = await browser.extract("What is the main heading?")
+await browser.stop()
+```
+
+### Option 2: Using nest_asyncio
+
+For compatibility with `asyncio.run()`, install and use `nest_asyncio`:
+
+```bash path=null start=null
+pip install flybrowser[jupyter]
+```
+
+```python path=null start=null
+from flybrowser.utils.jupyter import setup_jupyter
+import asyncio
+
+setup_jupyter()
+
+# Now asyncio.run() works in Jupyter
+async def main():
+    async with FlyBrowser(
+        llm_provider="openai",
+        llm_model="gpt-5.2"
+    ) as browser:
+        await browser.goto("https://example.com")
+        return await browser.extract("What is the main heading?")
+
+result = asyncio.run(main())
+```
+
+For complete Jupyter documentation, see the [Jupyter Notebooks Guide](jupyter-notebooks.md).
+
 ## Monitoring
 
 Monitor browser operations in real-time:

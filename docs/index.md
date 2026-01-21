@@ -7,6 +7,7 @@ FlyBrowser is an LLM-powered browser automation framework that provides intellig
 ### Getting Started
 
 - [Getting Started Guide](getting-started.md) - Installation, configuration, and first steps with FlyBrowser
+- [Jupyter Notebooks Guide](jupyter-notebooks.md) - Using FlyBrowser in Jupyter, JupyterLab, and Google Colab
 
 ### Deployment Guides
 

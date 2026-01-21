@@ -48,6 +48,18 @@ cd flybrowsers
 ./install.sh
 ```
 
+**Installation Modes:**
+```bash
+# Virtual environment (default, recommended)
+./install.sh --install-mode venv
+
+# System-wide (direct access, may conflict)
+./install.sh --install-mode system
+
+# User installation (no sudo required)
+./install.sh --install-mode user
+```
+
 **For development:**
 ```bash
 git clone https://github.com/firefly-oss/flybrowsers.git
@@ -59,6 +71,8 @@ cd flybrowsers
 ```bash
 flybrowser doctor
 ```
+
+See [INSTALL_GUIDE.md](INSTALL_GUIDE.md) for detailed installation options and activation guides.
 
 ### Embedded Usage
 
@@ -84,6 +98,38 @@ async def main():
 
 asyncio.run(main())
 ```
+
+### Jupyter Notebooks
+
+**Setup (one-time):**
+```bash
+flybrowser setup jupyter install
+```
+
+Then in Jupyter, select the **FlyBrowser** kernel and use await directly:
+
+```python
+from flybrowser import FlyBrowser
+
+browser = FlyBrowser(
+    llm_provider="openai",
+    llm_model="gpt-4"
+)
+
+await browser.start()
+await browser.goto("https://example.com")
+data = await browser.extract("What is the main heading?")
+await browser.stop()
+```
+
+**Management commands:**
+```bash
+flybrowser setup jupyter status     # Check installation
+flybrowser setup jupyter fix        # Fix issues
+flybrowser setup jupyter uninstall  # Remove kernel
+```
+
+See the [Jupyter Notebooks Guide](docs/jupyter-notebooks.md) for complete documentation.
 
 ### Interactive REPL
 
@@ -235,6 +281,7 @@ The `examples/` directory contains working code for common scenarios:
 | `08_rest_api_client.py` | Direct REST API usage |
 | `09_llm_providers.py` | OpenAI, Anthropic, Ollama |
 | `10_integrated_example.py` | All agents working together |
+| `11_jupyter_notebook.py` | Using FlyBrowser in Jupyter notebooks |
 
 ---
 
@@ -271,5 +318,5 @@ Built on the shoulders of giants:
 ---
 
 <p align="center">
-  <strong>Made with ❤️ by Firefly Software Solutions Inc</strong>
+  <strong>Made with love by Firefly Software Solutions Inc</strong>
 </p>
