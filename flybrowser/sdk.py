@@ -1081,6 +1081,21 @@ class FlyBrowser:
         
         app = web.Application()
         
+        # Request logging middleware
+        @web.middleware
+        async def log_requests(request, handler):
+            logger.info(f"HTTP Request: {request.method} {request.path}")
+            logger.info(f"Available routes: {[str(route) for route in app.router.routes()]}")
+            try:
+                response = await handler(request)
+                logger.info(f"Response status: {response.status}")
+                return response
+            except web.HTTPException as e:
+                logger.warning(f"HTTP Exception: {e.status} for {request.path}")
+                raise
+        
+        app.middlewares.append(log_requests)
+        
         # Serve stream files
         async def serve_stream_file(request):
             stream_id = request.match_info['stream_id']
