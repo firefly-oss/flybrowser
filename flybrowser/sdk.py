@@ -948,41 +948,43 @@ class FlyBrowser:
         
         # Start streaming session
         try:
-            await self._streaming_manager.start_stream(
-                stream_id=stream_id,
+            # Create stream configuration
+            from flybrowser.service.streaming import StreamConfig, StreamingProtocol, VideoCodec, QualityPreset
+            
+            config = StreamConfig(
                 protocol=stream_protocol,
-                quality=quality,
+                quality_preset=QualityPreset(quality.upper()) if isinstance(quality, str) else quality,
                 codec=video_codec,
-                output_path=str(stream_dir / stream_id),
                 rtmp_url=rtmp_url,
                 rtmp_key=rtmp_key,
             )
             
-            # Start local HTTP server if not already running
-            if not self._local_stream_server:
+            # Create and start stream
+            stream_info = await self._streaming_manager.create_stream(
+                session_id=self._session_id or "embedded",
+                page=self._page,
+                config=config,
+            )
+            
+            # Start local HTTP server if not already running (for serving HLS/DASH files)
+            if not self._local_stream_server and stream_protocol in [StreamingProtocol.HLS, StreamingProtocol.DASH]:
                 await self._start_local_stream_server(stream_dir)
             
-            # Start frame capture task
-            asyncio.create_task(self._capture_frames_for_stream(stream_id))
-            
-            # Build stream URLs
-            base_url = f"http://localhost:{self._local_stream_port}/{stream_id}"
+            # Return stream information
             result = {
-                "stream_id": stream_id,
+                "stream_id": stream_info.stream_id,
+                "session_id": stream_info.session_id,
                 "protocol": protocol,
                 "quality": quality,
                 "codec": codec,
-                "status": "active",
+                "status": stream_info.state.value if hasattr(stream_info.state, 'value') else str(stream_info.state),
+                "hls_url": stream_info.hls_url,
+                "dash_url": stream_info.dash_url,
+                "rtmp_url": stream_info.rtmp_url,
+                "stream_url": stream_info.hls_url or stream_info.dash_url or stream_info.rtmp_url,
             }
             
-            if stream_protocol == StreamingProtocol.HLS:
-                result["hls_url"] = f"{base_url}/playlist.m3u8"
-                result["stream_url"] = result["hls_url"]
-            elif stream_protocol == StreamingProtocol.DASH:
-                result["dash_url"] = f"{base_url}/manifest.mpd"
-                result["stream_url"] = result["dash_url"]
-            
-            logger.info(f"Embedded stream started: {stream_id}")
+            logger.info(f"Embedded stream started: {stream_info.stream_id}")
             return result
             
         except Exception as e:
@@ -996,7 +998,13 @@ class FlyBrowser:
             return {"success": False, "error": "No active stream"}
         
         try:
-            stats = await self._streaming_manager.stop_stream(self._active_stream_id)
+            # Get stream info from streaming manager (find by session_id)
+            stream_info = None
+            for stream_id, stream in self._streaming_manager._streams.items():
+                if stream.session_id == (self._session_id or "embedded"):
+                    stream_info = await self._streaming_manager.stop_stream(stream_id)
+                    break
+            
             stream_id = self._active_stream_id
             self._active_stream_id = None
             
@@ -1004,7 +1012,7 @@ class FlyBrowser:
             return {
                 "stream_id": stream_id,
                 "success": True,
-                "statistics": stats,
+                "info": stream_info.to_dict() if stream_info else None,
             }
         except Exception as e:
             logger.error(f"Failed to stop embedded stream: {e}")
@@ -1016,11 +1024,20 @@ class FlyBrowser:
             return {"active": False, "error": "No active stream"}
         
         try:
-            status = await self._streaming_manager.get_stream_status(self._active_stream_id)
+            # Find stream by session_id
+            stream_info = None
+            for stream_id, stream in self._streaming_manager._streams.items():
+                if stream.session_id == (self._session_id or "embedded"):
+                    stream_info = await self._streaming_manager.get_stream(stream_id)
+                    break
+            
+            if not stream_info:
+                return {"active": False, "error": "Stream not found"}
+            
             return {
-                "stream_id": self._active_stream_id,
+                "stream_id": stream_info.stream_id,
                 "active": True,
-                "status": status,
+                "status": stream_info.to_dict(),
             }
         except Exception as e:
             return {"active": False, "error": str(e)}
@@ -1064,23 +1081,13 @@ class FlyBrowser:
         logger.info(f"Local stream server started on port {port}")
     
     async def _capture_frames_for_stream(self, stream_id: str) -> None:
-        """Capture browser frames and send to stream."""
-        import asyncio
+        """Capture browser frames and send to stream.
         
-        try:
-            while self._active_stream_id == stream_id:
-                # Capture screenshot
-                screenshot_bytes = await self.browser_manager.page.screenshot()
-                
-                # Send frame to streaming manager
-                await self._streaming_manager.send_frame(stream_id, screenshot_bytes)
-                
-                # Wait for next frame (30 FPS)
-                await asyncio.sleep(1/30)
-                
-        except Exception as e:
-            logger.error(f"Frame capture error: {e}")
-            self._active_stream_id = None
+        Note: Frame capture is handled by FFmpegRecorder in the StreamingSession.
+        This method is kept for compatibility but is no longer needed.
+        """
+        # FFmpegRecorder handles frame capture automatically
+        pass
 
     # Utility methods
     @property
