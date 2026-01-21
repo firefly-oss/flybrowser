@@ -216,6 +216,11 @@ class RecordingStartRequest(BaseModel):
     """Request to start recording a session."""
 
     video_enabled: bool = Field(True, description="Enable video recording")
+    codec: str = Field("h264", description="Video codec (h264, h265, vp9)")
+    quality: str = Field("medium", description="Quality profile (low_bandwidth, medium, high, lossless)")
+    enable_hw_accel: bool = Field(True, description="Enable hardware acceleration")
+    enable_streaming: bool = Field(False, description="Enable streaming output")
+    stream_protocol: Optional[str] = Field(None, description="Streaming protocol (hls, dash, rtmp)")
     screenshot_interval: Optional[float] = Field(
         None, description="Interval for periodic screenshots (seconds)"
     )
@@ -241,6 +246,72 @@ class RecordingStopResponse(BaseModel):
     screenshot_count: int = Field(..., description="Number of screenshots captured")
     video_path: Optional[str] = Field(None, description="Path to video file")
     video_size_bytes: Optional[int] = Field(None, description="Video file size")
+
+
+# Enhanced recording and streaming models
+class StreamStartRequest(BaseModel):
+    """Request to start a stream."""
+
+    protocol: str = Field("hls", description="Streaming protocol (hls, dash, rtmp)")
+    quality: str = Field("medium", description="Quality profile")
+    codec: str = Field("h264", description="Video codec")
+    rtmp_url: Optional[str] = Field(None, description="RTMP destination URL")
+    rtmp_key: Optional[str] = Field(None, description="RTMP stream key")
+    max_viewers: int = Field(100, description="Maximum concurrent viewers")
+
+
+class StreamStartResponse(BaseModel):
+    """Response when stream starts."""
+
+    success: bool = Field(..., description="Whether stream started")
+    stream_id: str = Field(..., description="Stream identifier")
+    hls_url: Optional[str] = Field(None, description="HLS playlist URL")
+    dash_url: Optional[str] = Field(None, description="DASH manifest URL")
+    rtmp_url: Optional[str] = Field(None, description="RTMP URL")
+    websocket_url: Optional[str] = Field(None, description="WebSocket URL for updates")
+
+
+class StreamStatusResponse(BaseModel):
+    """Response with stream status and metrics."""
+
+    stream_id: str = Field(..., description="Stream identifier")
+    session_id: str = Field(..., description="Browser session ID")
+    state: str = Field(..., description="Stream state (active, paused, stopped, error)")
+    health: str = Field(..., description="Stream health (healthy, degraded, unhealthy)")
+    protocol: str = Field(..., description="Streaming protocol")
+    started_at: float = Field(..., description="Start timestamp")
+    uptime_seconds: float = Field(..., description="Stream uptime")
+    viewer_count: int = Field(..., description="Current viewer count")
+    metrics: Dict[str, Any] = Field(default_factory=dict, description="Stream metrics")
+    urls: Dict[str, Optional[str]] = Field(default_factory=dict, description="Stream URLs")
+
+
+class StreamStopResponse(BaseModel):
+    """Response when stream stops."""
+
+    success: bool = Field(..., description="Whether stream stopped")
+    stream_id: str = Field(..., description="Stream identifier")
+    duration_seconds: float = Field(..., description="Total stream duration")
+    total_viewers: int = Field(..., description="Total unique viewers")
+    frames_sent: int = Field(..., description="Total frames sent")
+    bytes_sent: int = Field(..., description="Total bytes sent")
+
+
+class RecordingListResponse(BaseModel):
+    """Response with list of recordings."""
+
+    recordings: List[Dict[str, Any]] = Field(default_factory=list, description="List of recordings")
+    total: int = Field(..., description="Total number of recordings")
+
+
+class RecordingDownloadResponse(BaseModel):
+    """Response with recording download information."""
+
+    recording_id: str = Field(..., description="Recording identifier")
+    file_name: str = Field(..., description="File name")
+    file_size_bytes: int = Field(..., description="File size")
+    download_url: Optional[str] = Field(None, description="Download URL (presigned if S3)")
+    expires_at: Optional[float] = Field(None, description="URL expiration timestamp")
 
 
 # PII handling models

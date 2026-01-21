@@ -67,7 +67,7 @@ from __future__ import annotations
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Dict
+from typing import Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -91,6 +91,8 @@ from flybrowser.service.models import (
     NavigateNLResponse,
     NavigateRequest,
     NavigateResponse,
+    RecordingDownloadResponse,
+    RecordingListResponse,
     RecordingStartRequest,
     RecordingStartResponse,
     RecordingStopResponse,
@@ -102,6 +104,10 @@ from flybrowser.service.models import (
     SessionResponse,
     StoreCredentialRequest,
     StoreCredentialResponse,
+    StreamStartRequest,
+    StreamStartResponse,
+    StreamStatusResponse,
+    StreamStopResponse,
     WorkflowRequest,
     WorkflowResponse,
 )
@@ -110,6 +116,8 @@ from flybrowser.utils.logger import logger
 
 # Global state
 session_manager: SessionManager = None
+streaming_manager = None
+recording_storage = None
 start_time: float = 0
 
 
@@ -128,11 +136,31 @@ async def lifespan(app: FastAPI):
     Yields:
         None during application runtime
     """
-    global session_manager, start_time
+    global session_manager, streaming_manager, recording_storage, start_time
 
     # Startup
     logger.info("Starting FlyBrowser service...")
     session_manager = SessionManager()
+    
+    # Initialize streaming manager
+    from flybrowser.service.streaming import StreamingManager
+    from flybrowser.service.config import get_config, create_storage_backend
+    
+    config = get_config()
+    if config.streaming_enabled:
+        streaming_manager = StreamingManager(
+            output_dir=config.recording_output_dir + "/streams",
+            base_url=config.streaming_base_url or f"http://{config.host}:{config.port}",
+            max_concurrent_streams=10,
+        )
+        await streaming_manager.start()
+        logger.info("Streaming manager initialized")
+    
+    # Initialize recording storage
+    if config.recording_enabled:
+        recording_storage = create_storage_backend(config)
+        logger.info(f"Recording storage initialized: {config.recording_storage}")
+    
     start_time = time.time()
     logger.info("FlyBrowser service started successfully")
 
@@ -140,6 +168,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down FlyBrowser service...")
+    if streaming_manager:
+        await streaming_manager.stop()
     await session_manager.cleanup_all()
     logger.info("FlyBrowser service shut down")
 
@@ -881,6 +911,391 @@ async def stop_recording(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Stop recording failed: {str(e)}",
+        )
+
+
+# Streaming endpoints
+@app.post(
+    "/sessions/{session_id}/stream/start",
+    response_model=StreamStartResponse,
+    tags=["Streaming"],
+    summary="Start streaming",
+    description="Start a live stream of the browser session.",
+)
+async def start_stream(
+    session_id: str,
+    request: StreamStartRequest,
+    api_key: APIKey = Depends(verify_api_key),
+):
+    """Start streaming the browser session."""
+    if not streaming_manager:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Streaming not enabled",
+        )
+    
+    try:
+        browser = session_manager.get_session(session_id)
+        page = browser.browser_manager.page
+        
+        # Build stream configuration
+        from flybrowser.service.streaming import StreamConfig
+        from flybrowser.core.ffmpeg_recorder import StreamingProtocol, QualityProfile, VideoCodec
+        
+        config = StreamConfig(
+            protocol=StreamingProtocol(request.protocol),
+            quality_profile=QualityProfile(request.quality),
+            codec=VideoCodec(request.codec),
+            rtmp_url=request.rtmp_url,
+            rtmp_key=request.rtmp_key,
+            max_viewers=request.max_viewers,
+        )
+        
+        # Start stream
+        stream_info = await streaming_manager.create_stream(session_id, page, config)
+        
+        return StreamStartResponse(
+            success=True,
+            stream_id=stream_info.stream_id,
+            hls_url=stream_info.hls_url,
+            dash_url=stream_info.dash_url,
+            rtmp_url=stream_info.rtmp_url,
+            websocket_url=stream_info.websocket_url,
+        )
+        
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session not found: {session_id}",
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Start stream failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Start stream failed: {str(e)}",
+        )
+
+
+@app.get(
+    "/sessions/{session_id}/stream/status",
+    response_model=StreamStatusResponse,
+    tags=["Streaming"],
+    summary="Get stream status",
+    description="Get current status and metrics of the stream.",
+)
+async def get_stream_status(
+    session_id: str,
+    api_key: APIKey = Depends(verify_api_key),
+):
+    """Get stream status for a session."""
+    if not streaming_manager:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Streaming not enabled",
+        )
+    
+    try:
+        streams = await streaming_manager.list_streams(session_id=session_id)
+        if not streams:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No active stream for session {session_id}",
+            )
+        
+        stream_info = streams[0]
+        return StreamStatusResponse(
+            stream_id=stream_info.stream_id,
+            session_id=stream_info.session_id,
+            state=stream_info.state.value,
+            health=stream_info.health.value,
+            protocol=stream_info.protocol.value,
+            started_at=stream_info.started_at,
+            uptime_seconds=time.time() - stream_info.started_at,
+            viewer_count=len(stream_info.viewer_ids),
+            metrics=stream_info.metrics.to_dict(),
+            urls={
+                "hls": stream_info.hls_url,
+                "dash": stream_info.dash_url,
+                "rtmp": stream_info.rtmp_url,
+                "websocket": stream_info.websocket_url,
+            },
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get stream status failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Get stream status failed: {str(e)}",
+        )
+
+
+@app.post(
+    "/sessions/{session_id}/stream/stop",
+    response_model=StreamStopResponse,
+    tags=["Streaming"],
+    summary="Stop streaming",
+    description="Stop the active stream for this session.",
+)
+async def stop_stream(
+    session_id: str,
+    api_key: APIKey = Depends(verify_api_key),
+):
+    """Stop streaming for a session."""
+    if not streaming_manager:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Streaming not enabled",
+        )
+    
+    try:
+        streams = await streaming_manager.list_streams(session_id=session_id)
+        if not streams:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No active stream for session {session_id}",
+            )
+        
+        stream_info = streams[0]
+        final_info = await streaming_manager.stop_stream(stream_info.stream_id)
+        
+        if not final_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Stream not found",
+            )
+        
+        return StreamStopResponse(
+            success=True,
+            stream_id=final_info.stream_id,
+            duration_seconds=final_info.ended_at - final_info.started_at if final_info.ended_at else 0,
+            total_viewers=len(final_info.viewer_ids),
+            frames_sent=final_info.metrics.frames_sent,
+            bytes_sent=final_info.metrics.bytes_sent,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Stop stream failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Stop stream failed: {str(e)}",
+        )
+
+
+# Recording management endpoints
+@app.get(
+    "/recordings",
+    response_model=RecordingListResponse,
+    tags=["Recording"],
+    summary="List recordings",
+    description="List all available recordings with optional filtering.",
+)
+async def list_recordings(
+    session_id: Optional[str] = None,
+    limit: int = 100,
+    api_key: APIKey = Depends(verify_api_key),
+):
+    """List available recordings."""
+    if not recording_storage:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Recording storage not enabled",
+        )
+    
+    try:
+        recordings = await recording_storage.list(session_id=session_id, limit=limit)
+        return RecordingListResponse(
+            recordings=[rec.to_dict() for rec in recordings],
+            total=len(recordings),
+        )
+    except Exception as e:
+        logger.error(f"List recordings failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"List recordings failed: {str(e)}",
+        )
+
+
+@app.get(
+    "/recordings/{recording_id}/download",
+    response_model=RecordingDownloadResponse,
+    tags=["Recording"],
+    summary="Get recording download info",
+    description="Get download information for a recording (presigned URL if S3).",
+)
+async def get_recording_download(
+    recording_id: str,
+    api_key: APIKey = Depends(verify_api_key),
+):
+    """Get download information for a recording."""
+    if not recording_storage:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Recording storage not enabled",
+        )
+    
+    try:
+        recording_info = await recording_storage.retrieve(recording_id)
+        if not recording_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Recording not found: {recording_id}",
+            )
+        
+        # Generate presigned URL if S3 storage
+        download_url = None
+        expires_at = None
+        
+        from flybrowser.service.cluster.storage import S3Storage
+        if isinstance(recording_storage, S3Storage):
+            download_url = await recording_storage.get_presigned_url(recording_id, expiration=86400)
+            if download_url:
+                expires_at = time.time() + 86400  # 24 hours
+        else:
+            # For local storage, provide direct path (in production, serve via static files)
+            download_url = f"/recordings/{recording_id}/file"
+        
+        return RecordingDownloadResponse(
+            recording_id=recording_info.recording_id,
+            file_name=recording_info.file_name,
+            file_size_bytes=recording_info.file_size_bytes,
+            download_url=download_url,
+            expires_at=expires_at,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get recording download failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Get recording download failed: {str(e)}",
+        )
+
+
+@app.delete(
+    "/recordings/{recording_id}",
+    tags=["Recording"],
+    summary="Delete recording",
+    description="Delete a recording from storage.",
+)
+async def delete_recording(
+    recording_id: str,
+    api_key: APIKey = Depends(verify_api_key),
+):
+    """Delete a recording."""
+    if not recording_storage:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Recording storage not enabled",
+        )
+    
+    try:
+        success = await recording_storage.delete(recording_id)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Recording not found: {recording_id}",
+            )
+        
+        return {"success": True, "recording_id": recording_id}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete recording failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Delete recording failed: {str(e)}",
+        )
+
+
+# Stream serving endpoints (for HLS/DASH)
+from fastapi.responses import PlainTextResponse, Response
+
+
+@app.get(
+    "/streams/{stream_id}/playlist.m3u8",
+    response_class=PlainTextResponse,
+    tags=["Streaming"],
+    summary="Get HLS playlist",
+    description="Get the HLS playlist for a stream.",
+)
+async def get_hls_playlist(stream_id: str):
+    """Serve HLS playlist."""
+    if not streaming_manager:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Streaming not enabled",
+        )
+    
+    try:
+        playlist = await streaming_manager.get_playlist(stream_id)
+        if not playlist:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Playlist not found",
+            )
+        
+        return PlainTextResponse(content=playlist, media_type="application/vnd.apple.mpegurl")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get HLS playlist failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@app.get(
+    "/streams/{stream_id}/{segment_name}",
+    response_class=Response,
+    tags=["Streaming"],
+    summary="Get HLS segment",
+    description="Get an HLS segment file.",
+)
+async def get_hls_segment(stream_id: str, segment_name: str):
+    """Serve HLS segment."""
+    if not streaming_manager:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Streaming not enabled",
+        )
+    
+    # Security: Only allow .ts files
+    if not segment_name.endswith(".ts"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid segment name",
+        )
+    
+    try:
+        segment_data = await streaming_manager.get_segment(stream_id, segment_name)
+        if not segment_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Segment not found",
+            )
+        
+        return Response(content=segment_data, media_type="video/mp2t")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get HLS segment failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
         )
 
 

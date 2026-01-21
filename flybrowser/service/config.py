@@ -179,6 +179,24 @@ class ServiceConfig(BaseSettings):
     # Recording settings
     recording_enabled: bool = Field(default=True, description="Enable recording features")
     recording_output_dir: str = Field(default="./recordings", description="Recording output directory")
+    recording_storage: str = Field(default="local", description="Storage backend: local, s3, or shared")
+    recording_retention_days: int = Field(default=7, ge=1, description="Recording retention in days")
+    
+    # FFmpeg settings
+    ffmpeg_path: Optional[str] = Field(default=None, description="Path to ffmpeg binary")
+    ffmpeg_enable_hw_accel: bool = Field(default=True, description="Enable hardware acceleration")
+    
+    # Streaming settings
+    streaming_enabled: bool = Field(default=True, description="Enable streaming features")
+    streaming_base_url: Optional[str] = Field(default=None, description="Base URL for streaming (HLS/DASH)")
+    
+    # S3 storage settings (for cluster mode)
+    s3_bucket: Optional[str] = Field(default=None, description="S3 bucket name for recordings")
+    s3_region: str = Field(default="us-east-1", description="S3 region")
+    s3_endpoint_url: Optional[str] = Field(default=None, description="S3 endpoint URL (for MinIO)")
+    s3_access_key: Optional[str] = Field(default=None, description="S3 access key")
+    s3_secret_key: Optional[str] = Field(default=None, description="S3 secret key")
+    s3_prefix: str = Field(default="recordings/", description="S3 key prefix for recordings")
     
     # PII settings
     pii_masking_enabled: bool = Field(default=True, description="Enable PII masking")
@@ -308,3 +326,43 @@ def create_ha_node_config(service_config: ServiceConfig) -> "HANodeConfig":
             LoadBalancingStrategy.LEAST_LOAD
         ),
     )
+
+
+def create_storage_backend(service_config: Optional[ServiceConfig] = None) -> "RecordingStorage":
+    """Create recording storage backend from configuration.
+    
+    Args:
+        service_config: Service configuration (uses global if not provided)
+        
+    Returns:
+        RecordingStorage instance
+    """
+    from flybrowser.service.cluster.storage import StorageBackend, create_storage_backend as _create
+    
+    if service_config is None:
+        service_config = get_config()
+    
+    backend = StorageBackend(service_config.recording_storage)
+    
+    if backend == StorageBackend.LOCAL:
+        return _create(backend, base_dir=service_config.recording_output_dir)
+    
+    elif backend == StorageBackend.S3:
+        if not service_config.s3_bucket:
+            raise ValueError("S3 storage requires s3_bucket configuration")
+        
+        return _create(
+            backend,
+            bucket=service_config.s3_bucket,
+            region=service_config.s3_region,
+            endpoint_url=service_config.s3_endpoint_url,
+            access_key=service_config.s3_access_key or os.environ.get("AWS_ACCESS_KEY_ID"),
+            secret_key=service_config.s3_secret_key or os.environ.get("AWS_SECRET_ACCESS_KEY"),
+            prefix=service_config.s3_prefix,
+        )
+    
+    elif backend == StorageBackend.SHARED:
+        return _create(backend, base_dir=service_config.recording_output_dir)
+    
+    else:
+        raise ValueError(f"Unknown storage backend: {backend}")
