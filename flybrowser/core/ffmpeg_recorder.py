@@ -457,6 +457,8 @@ class FFmpegRecorder:
     async def _capture_frames(self) -> None:
         """Capture frames from the page."""
         frame_interval = 1.0 / self.config.frame_rate
+        consecutive_errors = 0
+        max_consecutive_errors = 10  # Allow retries during navigation
         
         try:
             while self._recording:
@@ -491,16 +493,33 @@ class FFmpegRecorder:
                     try:
                         self._frame_buffer.put_nowait(raw_frame)
                         self._metadata.total_frames += 1
+                        consecutive_errors = 0  # Reset on success
                     except asyncio.QueueFull:
                         logger.warning("Frame buffer full, dropping frame")
                     
                 except Exception as e:
-                    logger.error(f"Frame capture error: {e}")
-                    # Check if page is still available
-                    if "page" in str(e).lower() or "target" in str(e).lower():
-                        logger.error("Page no longer available, stopping frame capture")
-                        self._recording = False
-                        break
+                    consecutive_errors += 1
+                    
+                    # Check if it's a page unavailability error (common during navigation)
+                    is_page_error = "page" in str(e).lower() or "target" in str(e).lower() or "protocol" in str(e).lower()
+                    
+                    if is_page_error:
+                        if consecutive_errors >= max_consecutive_errors:
+                            logger.error(f"Page unavailable for {consecutive_errors} consecutive attempts, stopping")
+                            self._recording = False
+                            break
+                        else:
+                            # Likely navigation in progress, wait and retry
+                            logger.debug(f"Page temporarily unavailable (attempt {consecutive_errors}/{max_consecutive_errors}), retrying...")
+                            await asyncio.sleep(0.2)  # Brief wait during navigation
+                            continue
+                    else:
+                        # Non-page error, log and continue
+                        logger.error(f"Frame capture error: {e}")
+                        if consecutive_errors >= 3:
+                            logger.error("Too many consecutive capture errors, stopping")
+                            self._recording = False
+                            break
                 
                 # Maintain frame rate
                 elapsed = time.time() - start_time
