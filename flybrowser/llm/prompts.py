@@ -91,11 +91,20 @@ Analyze the page and identify the best selector for the described element. Consi
 - Semantic meaning and context
 - Reliability of the selector
 
-Respond with a JSON object containing:
-- selector: The CSS selector or XPath
-- selector_type: "css" or "xpath"
-- confidence: A score from 0-1 indicating confidence
-- reasoning: Brief explanation of your choice
+CRITICAL: You MUST respond with ONLY a valid JSON object. Do NOT include:
+- Explanations or reasoning outside the JSON
+- Markdown code blocks (```json)
+- Any text before or after the JSON object
+
+Respond with ONLY this JSON structure:
+{
+  "selector": "CSS selector or XPath string",
+  "selector_type": "css" or "xpath",
+  "confidence": 0.0-1.0,
+  "reasoning": "Brief explanation"
+}
+
+Start your response with { and end with } - nothing else.
 """
 
 EXTRACTION_SYSTEM = """You are a data extraction specialist. Your task is to extract specific information from web pages.
@@ -103,10 +112,23 @@ EXTRACTION_SYSTEM = """You are a data extraction specialist. Your task is to ext
 You will be provided with:
 1. A screenshot of the web page (optional)
 2. The page's HTML content
-3. A description of what data to extract
+3. The current page URL and title
+4. A description of what data to extract
 
-Extract the requested information accurately and structure it according to the requirements.
-If the information is not available, indicate this clearly.
+GUIDELINES:
+- Extract actual visible content from the page (text, headings, links, data)
+- DO NOT extract HTML attributes, element IDs, CSS classes, or technical metadata
+- DO NOT extract URL parameters, query strings, or technical page data
+- Focus on human-readable information that answers the query
+- Structure data clearly in the "data" field
+- Metadata fields (source_url, extraction_query) will be auto-populated - leave them empty or use placeholder values
+
+CRITICAL: You MUST respond with ONLY valid JSON. Do NOT include:
+- Explanations outside the JSON object
+- Markdown code blocks (```json)
+- Any text before or after the JSON
+
+Your response must start with { and end with } - nothing else.
 """
 
 ACTION_PLANNING_SYSTEM = """You are a web automation planner. Your task is to break down high-level instructions into specific browser actions.
@@ -121,7 +143,21 @@ Break down the instruction into atomic actions such as:
 - scroll(direction)
 - wait(condition)
 
-Respond with a JSON array of actions in order.
+CRITICAL: You MUST respond with ONLY a valid JSON object. Do NOT include:
+- Explanations or reasoning outside the JSON
+- Markdown code blocks
+- Any text before or after the JSON
+
+Return ONLY this JSON structure:
+{
+  "actions": [
+    {"action_type": "click", "target": "description", "value": null, "options": {}},
+    ...
+  ],
+  "reasoning": "Brief plan explanation"
+}
+
+Start your response with { and end with } - nothing else.
 """
 
 NAVIGATION_SYSTEM = """You are a web navigation assistant. Your task is to help navigate web pages intelligently.
@@ -165,6 +201,12 @@ EXTRACTION_PROMPT = """Extract the following information from the page: {query}
 
 Current page URL: {url}
 Page title: {title}
+
+IMPORTANT:
+- Extract the actual visible content/text from the page, not HTML attributes or technical data
+- Focus on human-readable information that answers the query
+- Structure the extracted data in the "data" field
+- Include metadata with the actual page URL: {url} and query: {query}
 """
 
 ACTION_PLANNING_PROMPT = """Plan the steps to accomplish this task: {instruction}

@@ -196,6 +196,85 @@ class BaseAgent(ABC):
             return self.pii_handler.replace_values_with_placeholders(text)
         return text
 
+    async def enrich_response_metadata(
+        self,
+        result: Dict[str, Any],
+        query_or_instruction: str,
+        include_page_context: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Enrich agent response with accurate metadata.
+        
+        This method ensures that all agent responses have consistent, accurate metadata
+        including the actual page URL, timestamp, and query/instruction.
+        
+        Args:
+            result: The result dictionary from LLM/validator
+            query_or_instruction: The original user query or instruction
+            include_page_context: Whether to include current page context
+            
+        Returns:
+            Result with enriched metadata
+            
+        Example:
+            >>> result = await self.llm.generate(prompt)
+            >>> result = await self.enrich_response_metadata(
+            ...     result,
+            ...     query="Extract product names"
+            ... )
+            >>> # Now result['metadata'] has correct source_url, timestamp, etc.
+        """
+        from datetime import datetime
+        
+        # Ensure result is a dictionary
+        if not isinstance(result, dict):
+            result = {"data": result}
+        
+        # Get current page context if needed
+        if include_page_context:
+            try:
+                context = await self.get_page_context()
+                current_url = context["url"]
+                current_title = context["title"]
+            except Exception as e:
+                logger.warning(f"Could not get page context: {e}")
+                current_url = None
+                current_title = None
+        else:
+            current_url = None
+            current_title = None
+        
+        # Initialize metadata if it doesn't exist
+        if "metadata" not in result:
+            result["metadata"] = {}
+        
+        # Enrich metadata with accurate values
+        metadata = result["metadata"]
+        
+        # Fix or set source_url (remove hardcoded example URLs)
+        if current_url:
+            if (not metadata.get("source_url") or 
+                "example.com" in metadata.get("source_url", "") or
+                metadata.get("source_url") == "https://example.com/query"):
+                metadata["source_url"] = current_url
+        
+        # Set query/instruction if missing
+        if not metadata.get("extraction_query") and not metadata.get("instruction"):
+            # Use appropriate field name based on agent type
+            field_name = "extraction_query" if "extraction_query" in str(metadata) else "query"
+            metadata[field_name] = query_or_instruction
+        
+        # Add timestamp if not present
+        if not metadata.get("timestamp"):
+            metadata["timestamp"] = datetime.utcnow().isoformat() + "Z"
+        
+        # Add page title if available and not present
+        if current_title and not metadata.get("page_title"):
+            metadata["page_title"] = current_title
+        
+        result["metadata"] = metadata
+        return result
+    
     def mask_for_log(self, text: str) -> str:
         """
         Mask PII in text before logging.

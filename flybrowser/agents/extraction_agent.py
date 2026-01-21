@@ -36,9 +36,11 @@ import json
 from typing import Any, Dict, Optional
 
 from flybrowser.agents.base_agent import BaseAgent
+from flybrowser.agents.validation_agent import ResponseValidator
 from flybrowser.exceptions import ExtractionError
 from flybrowser.llm.prompts import EXTRACTION_PROMPT, EXTRACTION_SYSTEM
 from flybrowser.utils.logger import logger
+from flybrowser.utils.timing import StepTimer
 
 
 class ExtractionAgent(BaseAgent):
@@ -74,6 +76,11 @@ class ExtractionAgent(BaseAgent):
         ... }
         >>> data = await agent.execute("Extract product info", schema=schema)
     """
+    
+    def __init__(self, page_controller, element_detector, llm_provider, pii_handler=None) -> None:
+        """Initialize the extraction agent."""
+        super().__init__(page_controller, element_detector, llm_provider, pii_handler=pii_handler)
+        self.validator = ResponseValidator(llm_provider)
 
     async def execute(
         self, query: str, use_vision: bool = False, schema: Optional[Dict[str, Any]] = None
@@ -154,12 +161,18 @@ class ExtractionAgent(BaseAgent):
             ...     use_vision=True
             ... )
         """
+        # Start timing
+        timer = StepTimer()
+        timer.start()
+        
         try:
             # Mask query for logging to avoid exposing PII
             logger.info(f"Extracting data: {self.mask_for_log(query)}")
 
             # Get page context (URL, title, HTML)
+            timer.start_step("get_page_context")
             context = await self.get_page_context()
+            timer.end_step("get_page_context")
 
             # Mask query for LLM to avoid exposing PII
             safe_query = self.mask_for_llm(query)
@@ -176,18 +189,35 @@ class ExtractionAgent(BaseAgent):
             html_snippet = context["html"][:8000] + "..." if len(context["html"]) > 8000 else context["html"]
             prompt += f"\n\nHTML Content:\n{html_snippet}"
 
-            # Use structured extraction if schema provided
-            if schema:
-                result = await self.llm.generate_structured(
-                    prompt=prompt,
-                    schema=schema,
-                    system_prompt=EXTRACTION_SYSTEM,
-                    temperature=0.3,  # Lower temperature for more consistent structured output
-                )
-                logger.info("Data extracted successfully (structured)")
-                return {"success": True, "data": result, "query": query}
+            # Generate default schema if none provided
+            if not schema:
+                schema = {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "type": "object",
+                            "description": "The extracted data in structured format. Extract actual visible content from the page, not HTML attributes or technical metadata."
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "description": "Metadata about the extraction (will be auto-populated)",
+                            "properties": {
+                                "source_url": {
+                                    "type": "string",
+                                    "description": f"The source page URL: {context['url']}"
+                                },
+                                "extraction_query": {
+                                    "type": "string",
+                                    "description": f"The extraction query: {safe_query}"
+                                },
+                            }
+                        }
+                    },
+                    "required": ["data"]
+                }
 
             # Use vision-based extraction if enabled
+            timer.start_step("llm_generate")
             if use_vision:
                 screenshot = await self.page.screenshot()
                 response = await self.llm.generate_with_vision(
@@ -202,15 +232,33 @@ class ExtractionAgent(BaseAgent):
                     system_prompt=EXTRACTION_SYSTEM,
                     temperature=0.3,
                 )
+            timer.end_step("llm_generate")
 
-            # Try to parse as JSON, otherwise return as text
-            try:
-                result = json.loads(response.content)
-            except json.JSONDecodeError:
-                result = {"extracted_text": response.content}
+            # Validate and fix response to ensure JSON format
+            timer.start_step("validate_response")
+            result = await self.validator.validate_and_fix(
+                response.content,
+                schema,
+                context=f"Extracting data for query: {safe_query}"
+            )
+            timer.end_step("validate_response")
+            
+            # Enrich metadata with accurate values using base method
+            timer.start_step("enrich_metadata")
+            result = await self.enrich_response_metadata(
+                result,
+                query_or_instruction=query,
+                include_page_context=True
+            )
+            timer.end_step("enrich_metadata")
 
             logger.info("Data extracted successfully")
-            return {"success": True, "data": result, "query": query}
+            return {
+                "success": True,
+                "data": result,
+                "query": query,
+                "timing": timer.get_timings().to_dict(),
+            }
 
         except Exception as e:
             logger.error(f"Extraction failed: {self.mask_for_log(str(e))}")
@@ -221,5 +269,6 @@ class ExtractionAgent(BaseAgent):
                 "error": str(e),
                 "query": query,
                 "exception_type": type(e).__name__,
+                "timing": timer.get_timings().to_dict(),
             }
 
