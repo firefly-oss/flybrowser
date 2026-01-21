@@ -463,19 +463,33 @@ class FFmpegRecorder:
                 start_time = time.time()
                 
                 try:
-                    # Capture screenshot as raw bytes
+                    # Capture screenshot as PNG
                     screenshot_bytes = await self._page.screenshot(
                         type="png",
                         full_page=False,
                     )
                     
                     # Convert PNG to raw RGB24 (ffmpeg expects raw frames)
-                    # In production, we'd use PIL/Pillow for conversion
-                    # For now, we'll use the PNG directly (ffmpeg can decode it)
+                    from PIL import Image
+                    import io
+                    
+                    # Decode PNG to PIL Image
+                    img = Image.open(io.BytesIO(screenshot_bytes))
+                    
+                    # Resize if needed
+                    if img.size != (self.config.width, self.config.height):
+                        img = img.resize((self.config.width, self.config.height), Image.Resampling.LANCZOS)
+                    
+                    # Convert to RGB (remove alpha channel if present)
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    # Get raw RGB24 bytes
+                    raw_frame = img.tobytes()
                     
                     # Add frame to buffer (non-blocking)
                     try:
-                        self._frame_buffer.put_nowait(screenshot_bytes)
+                        self._frame_buffer.put_nowait(raw_frame)
                         self._metadata.total_frames += 1
                     except asyncio.QueueFull:
                         logger.warning("Frame buffer full, dropping frame")
