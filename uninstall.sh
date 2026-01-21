@@ -98,26 +98,46 @@ detect_os() {
 
 # Detect installation mode
 detect_install_mode() {
+    local found_any=false
+    local detected_modes=()
+    
     # Check for venv installation
     if [ -d "$VENV_DIR" ]; then
-        INSTALL_MODE="venv"
-        return
+        detected_modes+=("venv")
+        found_any=true
     fi
     
-    # Try to detect if flybrowser is installed in system or user
-    # Check system Python
-    if python3 -c "import flybrowser" 2>/dev/null; then
-        local install_loc=$(python3 -c "import flybrowser, os; print(os.path.dirname(flybrowser.__file__))" 2>/dev/null)
-        
-        if [[ "$install_loc" == "$HOME/.local"* ]]; then
-            INSTALL_MODE="user"
-        elif [[ "$install_loc" == "/usr/"* ]] || [[ "$install_loc" == "/opt/"* ]]; then
-            INSTALL_MODE="system"
-        else
-            INSTALL_MODE="unknown"
-        fi
-    else
+    # Check user site-packages (most common for pip install --user)
+    if python3 -m pip list --user 2>/dev/null | grep -q "^flybrowser"; then
+        detected_modes+=("user")
+        found_any=true
+    elif [ -n "$(find "$HOME/.local/lib" -type d -name "flybrowser" 2>/dev/null | head -n 1)" ]; then
+        detected_modes+=("user")
+        found_any=true
+    fi
+    
+    # Check system site-packages
+    if python3 -m pip list 2>/dev/null | grep -q "^flybrowser" && \
+       python3 -c "import flybrowser, os; install_loc = os.path.dirname(flybrowser.__file__); exit(0 if install_loc.startswith(('/usr/', '/opt/', '/Library/')) else 1)" 2>/dev/null; then
+        detected_modes+=("system")
+        found_any=true
+    fi
+    
+    # Check for CLI binaries in /usr/local/bin or ~/.local/bin
+    if [ -f "$INSTALL_DIR/flybrowser" ] || [ -f "$HOME/.local/bin/flybrowser" ]; then
+        found_any=true
+    fi
+    
+    # Set installation mode based on findings
+    if [ "$found_any" = false ]; then
         INSTALL_MODE="none"
+    elif [ ${#detected_modes[@]} -eq 1 ]; then
+        INSTALL_MODE="${detected_modes[0]}"
+    elif [ ${#detected_modes[@]} -gt 1 ]; then
+        # Multiple installations detected - use "multiple" mode
+        INSTALL_MODE="multiple"
+    else
+        INSTALL_MODE="unknown"
     fi
 }
 
@@ -386,10 +406,45 @@ remove_user_install() {
 remove_jupyter_kernel() {
     print_step "Checking for Jupyter kernel..."
     
+    local removed=false
+    
+    # Try using jupyter kernelspec if available
+    if command -v jupyter &> /dev/null; then
+        if jupyter kernelspec list 2>/dev/null | grep -q "flybrowser"; then
+            print_info "Found Jupyter kernel via kernelspec"
+            jupyter kernelspec uninstall -f flybrowser 2>/dev/null || {
+                print_warning "Could not uninstall via jupyter kernelspec, removing manually"
+                rm -rf "$JUPYTER_KERNEL_DIR" 2>/dev/null || true
+            }
+            print_success "Removed Jupyter kernel"
+            removed=true
+        fi
+    fi
+    
+    # Also check and remove the directory directly
     if [ -d "$JUPYTER_KERNEL_DIR" ]; then
         rm -rf "$JUPYTER_KERNEL_DIR"
-        print_success "Removed Jupyter kernel"
-    else
+        if [ "$removed" = false ]; then
+            print_success "Removed Jupyter kernel directory"
+            removed=true
+        fi
+    fi
+    
+    # Check for any other jupyter kernel directories in alternative locations
+    local alt_kernel_dirs=(
+        "$HOME/.jupyter/kernels/flybrowser"
+        "$HOME/Library/Jupyter/kernels/flybrowser"
+    )
+    
+    for kernel_dir in "${alt_kernel_dirs[@]}"; do
+        if [ -d "$kernel_dir" ]; then
+            rm -rf "$kernel_dir"
+            print_success "Removed kernel from $kernel_dir"
+            removed=true
+        fi
+    done
+    
+    if [ "$removed" = false ]; then
         print_info "No Jupyter kernel found"
     fi
 }
@@ -492,6 +547,24 @@ main() {
             echo "  • User-installed FlyBrowser package (~/.local)"
             echo "  • CLI commands in ~/.local/bin"
             ;;
+        multiple)
+            echo "  • Multiple installations detected:"
+            if [ -d "$VENV_DIR" ]; then
+                echo "    - Virtual environment: $VENV_DIR"
+            fi
+            if python3 -m pip list --user 2>/dev/null | grep -q "^flybrowser"; then
+                echo "    - User package (~/.local)"
+            fi
+            if python3 -m pip list 2>/dev/null | grep -q "^flybrowser"; then
+                echo "    - System package"
+            fi
+            if [ -f "$INSTALL_DIR/flybrowser" ]; then
+                echo "    - CLI commands in $INSTALL_DIR"
+            fi
+            if [ -f "$HOME/.local/bin/flybrowser" ]; then
+                echo "    - CLI commands in ~/.local/bin"
+            fi
+            ;;
         *)
             echo "  • All detected FlyBrowser installations"
             ;;
@@ -545,6 +618,13 @@ main() {
             remove_system_install
             ;;
         user)
+            remove_user_install
+            ;;
+        multiple)
+            print_info "Removing all detected installations..."
+            remove_cli_wrappers
+            remove_venv
+            remove_system_install
             remove_user_install
             ;;
         *)
