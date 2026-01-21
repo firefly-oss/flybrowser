@@ -1,0 +1,409 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+#
+# ============================================================================
+# FlyBrowser Taskfile - Best-in-class task runner configuration
+# ============================================================================
+#
+# Quick Reference:
+#   task                    Show available tasks
+#   task install            Standard installation
+#   task dev                Start development environment
+#   task test               Run all tests
+#   task check              Run all code quality checks
+#   task serve              Start the API server
+#
+# Installation:
+#   brew install go-task    (macOS)
+#   go install github.com/go-task/task/v3/cmd/task@latest
+#
+# ============================================================================
+
+version: '3'
+
+vars:
+  PYTHON: python3
+  PIP: pip3
+  UV: uv
+  PYTEST: pytest
+  BLACK: black
+  RUFF: ruff
+  MYPY: mypy
+  UVICORN: uvicorn
+  SERVICE_HOST: 0.0.0.0
+  SERVICE_PORT: 8000
+  DOCKER_IMAGE: flybrowser
+  DOCKER_TAG: latest
+  COVERAGE_MIN: 80
+
+# Environment variables
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+# ============================================================================
+# INSTALLATION TASKS
+# ============================================================================
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  # Quick install - auto-detects best method
+  install:
+    desc: "📦 Install FlyBrowser (auto-detects uv/pip)"
+    cmds:
+      - task: _check-python
+      - |
+        if command -v uv &> /dev/null; then
+          echo "Using uv for fast installation..."
+          uv pip install -e .
+        else
+          echo "Using pip for installation..."
+          {{.PIP}} install -e .
+        fi
+      - "{{.PYTHON}} -m playwright install chromium"
+      - echo "✓ FlyBrowser installed successfully"
+      - echo ""
+      - echo "Next steps:"
+      - echo "  task setup     # Run configuration wizard"
+      - echo "  task serve     # Start the API server"
+      - echo "  task repl      # Launch interactive REPL"
+
+  install:dev:
+    desc: "📦 Install with development dependencies"
+    cmds:
+      - task: _check-python
+      - |
+        if command -v uv &> /dev/null; then
+          uv pip install -e ".[dev,repl]"
+        else
+          {{.PIP}} install -e ".[dev,repl]"
+        fi
+      - "{{.PYTHON}} -m playwright install chromium firefox webkit"
+      - echo "✓ Development environment ready"
+
+  install:prod:
+    desc: "📦 Install for production (minimal dependencies)"
+    cmds:
+      - task: _check-python
+      - "{{.PIP}} install ."
+      - "{{.PYTHON}} -m playwright install chromium"
+      - echo "✓ Production installation complete"
+
+  install:browsers:
+    desc: "📦 Install Playwright browsers"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.setup browsers install --browsers={{.BROWSERS}}"
+    vars:
+      BROWSERS: '{{default "chromium" .BROWSERS}}'
+
+  install:uv:
+    desc: "📦 Install uv (fast Python package installer)"
+    cmds:
+      - curl -LsSf https://astral.sh/uv/install.sh | sh
+      - echo "✓ uv installed. Restart your shell or run: source ~/.cargo/env"
+
+  setup:
+    desc: "⚙️  Run interactive setup wizard"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main setup configure"
+
+  verify:
+    desc: "✓ Verify FlyBrowser installation"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main doctor"
+
+  doctor:
+    desc: "🔍 Run installation diagnostics"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main doctor"
+
+  uninstall:
+    desc: "🗑️  Uninstall FlyBrowser"
+    cmds:
+      - ./install.sh --uninstall
+    status:
+      - test ! -f install.sh
+
+  clean:
+    desc: "🧹 Clean build artifacts and caches"
+    cmds:
+      - rm -rf build/ dist/ *.egg-info
+      - rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov/ .coverage
+      - find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+      - echo "✓ Cleaned build artifacts"
+
+# ============================================================================
+# DEVELOPMENT TASKS
+# ============================================================================
+
+  dev:
+    desc: "🚀 Start development environment (server with reload)"
+    cmds:
+      - task: serve
+    env:
+      FLYBROWSER_ENV: development
+
+  repl:
+    desc: "💻 Launch interactive REPL"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main repl"
+
+  shell:
+    desc: "🐍 Start Python shell with FlyBrowser imported"
+    cmds:
+      - "{{.PYTHON}} -i -c 'import flybrowser; print(\"FlyBrowser loaded. Version:\", flybrowser.__version__)'"
+
+# ============================================================================
+# CODE QUALITY TASKS
+# ============================================================================
+
+  format:
+    desc: "🎨 Format code with Black"
+    cmds:
+      - "{{.BLACK}} flybrowser/ examples/ tests/"
+      - echo "✓ Code formatted"
+
+  lint:
+    desc: "🔍 Lint code with Ruff"
+    cmds:
+      - "{{.RUFF}} check flybrowser/ examples/ tests/"
+
+  lint:fix:
+    desc: "🔧 Lint and auto-fix issues"
+    cmds:
+      - "{{.RUFF}} check --fix flybrowser/ examples/ tests/"
+      - echo "✓ Auto-fixed linting issues"
+
+  typecheck:
+    desc: "📝 Run type checking with mypy"
+    cmds:
+      - "{{.MYPY}} flybrowser/"
+
+  check:
+    desc: "✅ Run all code quality checks"
+    cmds:
+      - task: format
+      - task: lint
+      - task: typecheck
+      - echo ""
+      - echo "✓ All checks passed"
+
+  precommit:
+    desc: "🔒 Run pre-commit checks (format, lint, typecheck, test:unit)"
+    cmds:
+      - task: format
+      - task: lint
+      - task: typecheck
+      - task: test:unit
+      - echo ""
+      - echo "✓ Ready to commit"
+
+# ============================================================================
+# TESTING TASKS
+# ============================================================================
+
+  test:
+    desc: "🧪 Run all tests"
+    cmds:
+      - "{{.PYTEST}} tests/ -v"
+
+  test:unit:
+    desc: "🧪 Run unit tests only"
+    cmds:
+      - "{{.PYTEST}} tests/unit/ -v"
+
+  test:integration:
+    desc: "🧪 Run integration tests"
+    cmds:
+      - "{{.PYTEST}} tests/integration/ -v"
+
+  test:e2e:
+    desc: "🧪 Run end-to-end tests"
+    cmds:
+      - "{{.PYTEST}} tests/e2e/ -v"
+
+  test:cli:
+    desc: "🧪 Run CLI tests"
+    cmds:
+      - "{{.PYTEST}} tests/cli/ -v"
+
+  test:cov:
+    desc: "📊 Run tests with coverage report"
+    cmds:
+      - "{{.PYTEST}} tests/ --cov=flybrowser --cov-report=html --cov-report=term --cov-fail-under={{.COVERAGE_MIN}}"
+      - echo "✓ Coverage report generated in htmlcov/"
+
+  test:watch:
+    desc: "👀 Run tests in watch mode"
+    cmds:
+      - "{{.PYTEST}} tests/ -v --watch"
+
+# ============================================================================
+# SERVICE TASKS
+# ============================================================================
+
+  serve:
+    desc: "🚀 Run FlyBrowser API service (development mode)"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main serve --host {{.SERVICE_HOST}} --port {{.SERVICE_PORT}} --reload"
+
+  serve:prod:
+    desc: "🚀 Run service in production mode"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main serve --host {{.SERVICE_HOST}} --port {{.SERVICE_PORT}} --workers 4"
+
+  serve:cluster:
+    desc: "🚀 Run service in HA cluster mode"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main serve --cluster --host {{.SERVICE_HOST}} --port {{.SERVICE_PORT}}"
+
+# ============================================================================
+# CLUSTER TASKS
+# ============================================================================
+
+  cluster:status:
+    desc: "📊 Show cluster status"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main cluster status --endpoint http://{{.SERVICE_HOST}}:{{.SERVICE_PORT}}"
+
+  cluster:nodes:
+    desc: "📊 List cluster nodes"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main cluster nodes --endpoint http://{{.SERVICE_HOST}}:{{.SERVICE_PORT}}"
+
+  cluster:health:
+    desc: "❤️  Check cluster health"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main cluster health --endpoint http://{{.SERVICE_HOST}}:{{.SERVICE_PORT}}"
+
+# ============================================================================
+# DOCKER TASKS
+# ============================================================================
+
+  docker:build:
+    desc: "🐳 Build Docker image"
+    cmds:
+      - docker build -t {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}} .
+      - echo "✓ Built {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}}"
+
+  docker:run:
+    desc: "🐳 Run FlyBrowser in Docker"
+    cmds:
+      - docker run -p {{.SERVICE_PORT}}:{{.SERVICE_PORT}} {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}}
+
+  docker:push:
+    desc: "🐳 Push Docker image to registry"
+    cmds:
+      - docker push {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}}
+
+  docker:compose:
+    desc: "🐳 Start with Docker Compose"
+    cmds:
+      - docker-compose -f docker/docker-compose.yml up -d
+
+  docker:compose:cluster:
+    desc: "🐳 Start cluster with Docker Compose"
+    cmds:
+      - docker-compose -f docker/docker-compose.cluster.yml up -d
+
+  docker:compose:down:
+    desc: "🐳 Stop Docker Compose services"
+    cmds:
+      - docker-compose -f docker/docker-compose.yml down
+      - docker-compose -f docker/docker-compose.cluster.yml down 2>/dev/null || true
+
+# ============================================================================
+# BUILD & RELEASE TASKS
+# ============================================================================
+
+  build:
+    desc: "📦 Build distribution packages"
+    cmds:
+      - task: clean
+      - "{{.PYTHON}} -m build"
+      - echo "✓ Built distribution packages in dist/"
+
+  release:
+    desc: "🏷️  Create a new release (requires VERSION argument)"
+    cmds:
+      - |
+        if [ -z "{{.VERSION}}" ]; then
+          echo "Error: VERSION is required"
+          echo "Usage: task release VERSION=1.26.1"
+          exit 1
+        fi
+      - task: check
+      - task: test
+      - task: build
+      - echo "✓ Ready to release version {{.VERSION}}"
+      - echo "  Run: git tag v{{.VERSION}} && git push --tags"
+
+# ============================================================================
+# DOCUMENTATION TASKS
+# ============================================================================
+
+  docs:build:
+    desc: "📚 Build documentation"
+    cmds:
+      - echo "Building documentation..."
+      - mkdocs build 2>/dev/null || echo "mkdocs not installed, skipping"
+
+  docs:serve:
+    desc: "📚 Serve documentation locally"
+    cmds:
+      - mkdocs serve 2>/dev/null || echo "mkdocs not installed"
+
+# ============================================================================
+# UTILITY TASKS
+# ============================================================================
+
+  version:
+    desc: "📋 Show FlyBrowser version"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main version"
+
+  version:json:
+    desc: "📋 Show version info as JSON"
+    cmds:
+      - "{{.PYTHON}} -m flybrowser.cli.main version --json"
+
+  info:
+    desc: "📋 Show environment info"
+    cmds:
+      - echo "FlyBrowser Development Environment"
+      - echo "=================================="
+      - echo "Python:    $({{.PYTHON}} --version)"
+      - echo "pip:       $({{.PIP}} --version | cut -d' ' -f1-2)"
+      - echo "uv:        $(uv --version 2>/dev/null || echo 'not installed')"
+      - echo "Task:      $(task --version)"
+      - echo "Docker:    $(docker --version 2>/dev/null || echo 'not installed')"
+      - echo ""
+      - echo "FlyBrowser:"
+      - "{{.PYTHON}} -m flybrowser.cli.main version --json" 2>/dev/null || echo "  not installed"
+
+# ============================================================================
+# INTERNAL TASKS (prefixed with _)
+# ============================================================================
+
+  _check-python:
+    internal: true
+    cmds:
+      - |
+        if ! command -v {{.PYTHON}} &> /dev/null; then
+          echo "Error: Python 3 is required but not found"
+          exit 1
+        fi
+        version=$({{.PYTHON}} -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+        major=$(echo $version | cut -d. -f1)
+        minor=$(echo $version | cut -d. -f2)
+        if [ "$major" -lt 3 ] || ([ "$major" -eq 3 ] && [ "$minor" -lt 9 ]); then
+          echo "Error: Python 3.9+ is required (found $version)"
+          exit 1
+        fi
+    silent: true
+
