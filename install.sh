@@ -47,6 +47,7 @@
 # Options:
 #   --install-dir DIR     CLI installation directory (default: /usr/local/bin)
 #   --venv-dir DIR        Virtual environment directory (default: ~/.flybrowser/venv)
+#   --install-mode MODE   Installation mode: venv, system, or user (default: venv)
 #   --version VER         Install specific version (default: latest)
 #   --dev                 Development mode (install from current directory)
 #   --with-service        Install as system service (systemd/launchd)
@@ -114,6 +115,9 @@ UNINSTALL=false
 FLYBROWSER_VERSION="latest"
 GITHUB_REPO="firefly-oss/flybrowsers"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main"
+
+# Installation mode: venv, system, or user
+INSTALL_MODE="venv"  # venv (default), system, user
 
 # Installation context
 INSTALLATION_CONTEXT="unknown"  # source, remote, or unknown
@@ -467,6 +471,72 @@ check_python_version() {
     return 1
 }
 
+# Allow user to select installation mode
+select_install_mode() {
+    # Non-interactive mode: use default
+    if [ ! -t 0 ] || [ "${FLYBROWSER_ACCEPT_DEFAULTS:-}" = "true" ]; then
+        print_info "Using default installation mode: $INSTALL_MODE"
+        return
+    fi
+    
+    echo ""
+    print_msg "$CYAN" "$EMOJI_PACKAGE Select Installation Mode:"
+    echo ""
+    echo -e "  ${GREEN}${BOLD}1)${NC} Virtual Environment (recommended)"
+    echo -e "     ${DIM}Installs in ~/.flybrowser/venv - isolated from system Python${NC}"
+    echo -e "     ${DIM}Best for: Most users, development, multiple Python projects${NC}"
+    echo ""
+    echo -e "  2) System-wide Installation"
+    echo -e "     ${DIM}Installs globally with pip --break-system-packages${NC}"
+    echo -e "     ${DIM}Best for: Single-user systems, direct command access${NC}"
+    echo -e "     ${YELLOW}⚠ May conflict with system packages${NC}"
+    echo ""
+    echo -e "  3) User Installation"
+    echo -e "     ${DIM}Installs to ~/.local (pip install --user)${NC}"
+    echo -e "     ${DIM}Best for: Shared systems without sudo access${NC}"
+    echo ""
+    
+    while true; do
+        read -p "Select installation mode [1-3] (Enter = 1): " choice
+        
+        # Default to venv
+        if [ -z "$choice" ]; then
+            choice=1
+        fi
+        
+        case $choice in
+            1)
+                INSTALL_MODE="venv"
+                VENV_DIR="$HOME/.flybrowser/venv"
+                print_success "Selected: Virtual Environment"
+                echo ""
+                return
+                ;;
+            2)
+                INSTALL_MODE="system"
+                print_warning "Selected: System-wide installation"
+                echo -e "     ${YELLOW}This may require sudo and can conflict with system packages${NC}"
+                read -p "     Are you sure? [y/N] " -n 1 -r confirm
+                echo
+                if [[ $confirm =~ ^[Yy]$ ]]; then
+                    echo ""
+                    return
+                fi
+                ;;
+            3)
+                INSTALL_MODE="user"
+                print_success "Selected: User installation"
+                echo -e "     ${DIM}Will install to ~/.local${NC}"
+                echo ""
+                return
+                ;;
+            *)
+                print_warning "Invalid choice. Enter a number between 1 and 3"
+                ;;
+        esac
+    done
+}
+
 # Allow user to select Python version
 select_python_version() {
     detect_python_versions
@@ -645,8 +715,12 @@ check_requirements() {
     fi
 }
 
-# Create virtual environment
+# Create virtual environment (only for venv mode)
 create_venv() {
+    if [ "$INSTALL_MODE" != "venv" ]; then
+        return
+    fi
+    
     print_step "Creating virtual environment with $SELECTED_PYTHON..."
     
     mkdir -p "$DATA_DIR"
@@ -672,19 +746,6 @@ create_venv() {
 install_flybrowser() {
     print_step "Installing FlyBrowser from source..."
     
-    # Activate venv
-    # shellcheck source=/dev/null
-    source "$VENV_DIR/bin/activate"
-    
-    # Determine install command based on package manager
-    local install_cmd="pip install"
-    if [ "$PACKAGE_MANAGER" = "uv" ]; then
-        install_cmd="uv pip install"
-    fi
-    
-    # Upgrade pip first
-    $install_cmd --upgrade pip > /dev/null 2>&1 || true
-    
     # Determine installation path
     local install_path="$SOURCE_DIR"
     if [ -z "$install_path" ]; then
@@ -699,22 +760,71 @@ install_flybrowser() {
     
     print_info "Installing from: $install_path"
     
+    # Determine install command based on mode and package manager
+    local install_cmd
+    local install_args
+    
+    case "$INSTALL_MODE" in
+        venv)
+            # Activate venv
+            # shellcheck source=/dev/null
+            source "$VENV_DIR/bin/activate"
+            
+            if [ "$PACKAGE_MANAGER" = "uv" ]; then
+                install_cmd="uv pip install"
+            else
+                install_cmd="$SELECTED_PYTHON -m pip install"
+            fi
+            install_args="-e"
+            ;;
+        system)
+            if [ "$PACKAGE_MANAGER" = "uv" ]; then
+                install_cmd="$SELECTED_PYTHON -m uv pip install"
+            else
+                install_cmd="$SELECTED_PYTHON -m pip install"
+            fi
+            # Use --break-system-packages for system-wide installation
+            install_args="-e --break-system-packages"
+            print_warning "Using --break-system-packages for system-wide installation"
+            ;;
+        user)
+            if [ "$PACKAGE_MANAGER" = "uv" ]; then
+                install_cmd="$SELECTED_PYTHON -m uv pip install"
+            else
+                install_cmd="$SELECTED_PYTHON -m pip install"
+            fi
+            install_args="-e --user"
+            ;;
+    esac
+    
+    # Upgrade pip first
+    if [ "$INSTALL_MODE" = "venv" ]; then
+        $install_cmd --upgrade pip > /dev/null 2>&1 || true
+    fi
+    
     # Install with appropriate extras
     local extras="dev"
     if [ "$DEV_MODE" = true ]; then
         extras="dev,repl"
     fi
     
-    if [ "$PACKAGE_MANAGER" = "uv" ]; then
-        (cd "$install_path" && uv pip install -e ".[$extras]")
-    else
-        pip install -e "$install_path[$extras]"
-    fi
+    print_info "Installation mode: $INSTALL_MODE"
+    print_info "Command: $install_cmd $install_args"
+    
+    # Run installation
+    (cd "$install_path" && $install_cmd $install_args ".[$extras]")
     
     # Get installed version
+    local python_cmd
+    if [ "$INSTALL_MODE" = "venv" ]; then
+        python_cmd="python"
+    else
+        python_cmd="$SELECTED_PYTHON"
+    fi
+    
     local installed_version
-    installed_version=$(python -c "import flybrowser; print(flybrowser.__version__)" 2>/dev/null) || installed_version="unknown"
-    print_success "FlyBrowser $installed_version installed"
+    installed_version=$($python_cmd -c "import flybrowser; print(flybrowser.__version__)" 2>/dev/null) || installed_version="unknown"
+    print_success "FlyBrowser $installed_version installed ($INSTALL_MODE mode)"
 }
 
 # Install Playwright browsers (deprecated - now handled by flybrowser-setup CLI)
@@ -738,6 +848,13 @@ install_playwright() {
 
 # Create CLI wrapper scripts
 create_wrappers() {
+    # Skip wrapper creation for system/user modes - commands work directly
+    if [ "$INSTALL_MODE" != "venv" ]; then
+        print_info "Skipping CLI wrappers (using direct Python commands in $INSTALL_MODE mode)"
+        print_info "Commands available: flybrowser, flybrowser-setup, etc."
+        return
+    fi
+    
     print_step "Creating CLI commands..."
 
     # Check if we have write permission
@@ -999,6 +1116,14 @@ parse_args() {
                 VENV_DIR="$2"
                 shift 2
                 ;;
+            --install-mode)
+                INSTALL_MODE="$2"
+                if [[ ! "$INSTALL_MODE" =~ ^(venv|system|user)$ ]]; then
+                    print_error "Invalid install mode: $INSTALL_MODE (must be venv, system, or user)"
+                    exit 1
+                fi
+                shift 2
+                ;;
             --version)
                 FLYBROWSER_VERSION="$2"
                 shift 2
@@ -1058,10 +1183,73 @@ run_setup_cli() {
         cli_args+=("--no-browsers")
     fi
 
+    if [ "$RUN_WIZARD" = false ]; then
+        cli_args+=("--no-wizard")
+    else
+        cli_args+=("--interactive")
+    fi
+
     # Run the CLI with proper quoting
     python -m flybrowser.cli.setup "${cli_args[@]}" || {
         print_warning "Setup CLI had issues, continuing..."
     }
+}
+
+# Setup Jupyter kernel (optional, interactive)
+setup_jupyter_kernel() {
+    # Only offer for venv installations
+    if [ "$INSTALL_MODE" != "venv" ]; then
+        return 0
+    fi
+    
+    # Skip if non-interactive
+    if [ "$RUN_WIZARD" = false ]; then
+        return 0
+    fi
+    
+    echo ""
+    print_step "Setting up Jupyter Notebook integration..."
+    echo "FlyBrowser can be used in Jupyter notebooks with a custom kernel."
+    echo ""
+    
+    # Ask user
+    read -r -p "Install Jupyter kernel? [Y/n] " reply
+    if [[ "$reply" =~ ^[Nn]$ ]]; then
+        echo "Skipping Jupyter setup. You can install it later with:"
+        echo "  flybrowser setup jupyter install"
+        return 0
+    fi
+    
+    # Activate venv
+    # shellcheck source=/dev/null
+    source "$VENV_DIR/bin/activate"
+    
+    # Check if jupyter/ipykernel are installed
+    if ! python -m pip show jupyter ipykernel &>/dev/null; then
+        echo "Installing Jupyter dependencies..."
+        python -m pip install --quiet jupyter ipykernel nest_asyncio || {
+            print_warning "Failed to install Jupyter dependencies"
+            return 1
+        }
+    fi
+    
+    # Register kernel
+    if python -m ipykernel install --user --name=flybrowser --display-name="FlyBrowser" &>/dev/null; then
+        print_success "Jupyter kernel installed"
+        echo ""
+        echo "To use FlyBrowser in Jupyter:"
+        echo "  1. Start Jupyter: jupyter notebook"
+        echo "  2. Select kernel: FlyBrowser"
+        echo "  3. Use 'await' directly in cells"
+        echo ""
+        echo "Management commands:"
+        echo "  flybrowser setup jupyter status     # Check installation"
+        echo "  flybrowser setup jupyter fix        # Fix issues"
+        echo "  flybrowser setup jupyter uninstall  # Remove kernel"
+    else
+        print_warning "Failed to register Jupyter kernel"
+        echo "You can try again later with: flybrowser setup jupyter install"
+    fi
 }
 
 # Verify installation using CLI
@@ -1183,15 +1371,25 @@ main() {
     # Clone repository if not in source directory
     clone_to_temp
 
-    # Phase 0: Detect and select Python version
+    # Phase 0: Select installation mode
+    select_install_mode
+    
+    # Phase 1: Detect and select Python version
     print_step "Detecting Python installations..."
     select_python_version
     
     echo ""
     print_msg "$BOLD" "Installation Settings:"
+    echo "  Installation mode:    $INSTALL_MODE"
     echo "  Python:               $SELECTED_PYTHON"
     echo "  Install directory:    $INSTALL_DIR"
-    echo "  Virtual environment:  $VENV_DIR"
+    if [ "$INSTALL_MODE" = "venv" ]; then
+        echo "  Virtual environment:  $VENV_DIR"
+    elif [ "$INSTALL_MODE" = "user" ]; then
+        echo "  User directory:       ~/.local"
+    else
+        echo "  System-wide:          (--break-system-packages)"
+    fi
     echo "  Version:              $FLYBROWSER_VERSION"
     echo "  Development mode:     $DEV_MODE"
     echo "  Install service:      $WITH_SERVICE"
@@ -1214,6 +1412,9 @@ main() {
 
     # Phase 3: Setup browsers and config
     run_setup_cli
+    
+    # Phase 3.5: Optional Jupyter kernel setup
+    setup_jupyter_kernel
 
     # Phase 4: Service installation
     install_service

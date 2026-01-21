@@ -59,6 +59,11 @@ INSTALL_DIR="/usr/local/bin"
 VENV_DIR="$HOME/.flybrowser/venv"
 DATA_DIR="$HOME/.flybrowser"
 CONFIG_DIR="$HOME/.config/flybrowser"
+USER_SITE_DIR="$HOME/.local/lib"
+JUPYTER_KERNEL_DIR="$HOME/.local/share/jupyter/kernels/flybrowser"
+
+# Installation mode detection
+INSTALL_MODE="unknown"  # venv, system, user, or unknown
 
 # Options
 REMOVE_DATA=false
@@ -89,6 +94,31 @@ detect_os() {
         CYGWIN*|MINGW*|MSYS*) echo "windows";;
         *)          echo "unknown";;
     esac
+}
+
+# Detect installation mode
+detect_install_mode() {
+    # Check for venv installation
+    if [ -d "$VENV_DIR" ]; then
+        INSTALL_MODE="venv"
+        return
+    fi
+    
+    # Try to detect if flybrowser is installed in system or user
+    # Check system Python
+    if python3 -c "import flybrowser" 2>/dev/null; then
+        local install_loc=$(python3 -c "import flybrowser, os; print(os.path.dirname(flybrowser.__file__))" 2>/dev/null)
+        
+        if [[ "$install_loc" == "$HOME/.local"* ]]; then
+            INSTALL_MODE="user"
+        elif [[ "$install_loc" == "/usr/"* ]] || [[ "$install_loc" == "/opt/"* ]]; then
+            INSTALL_MODE="system"
+        else
+            INSTALL_MODE="unknown"
+        fi
+    else
+        INSTALL_MODE="none"
+    fi
 }
 
 # Print banner
@@ -131,13 +161,24 @@ Examples:
   # Remove only binaries, keep config
   ./uninstall.sh --keep-data
 
-Paths that may be removed:
-  CLI Commands:     /usr/local/bin/flybrowser*
-  Virtual Env:      ~/.flybrowser/venv
-  Data Directory:   ~/.flybrowser
-  Config Directory: ~/.config/flybrowser
-  macOS Service:    ~/Library/LaunchAgents/dev.flybrowser.plist
-  Linux Service:    /etc/systemd/system/flybrowser.service
+Paths that may be removed (depending on installation mode):
+  Virtual Env Mode:
+    - CLI Commands:     /usr/local/bin/flybrowser*
+    - Virtual Env:      ~/.flybrowser/venv
+  
+  System-wide Mode:
+    - System Python packages
+  
+  User Mode:
+    - User packages:    ~/.local/lib/python*/site-packages/flybrowser
+    - CLI Commands:     ~/.local/bin/flybrowser*
+  
+  Common:
+    - Data Directory:   ~/.flybrowser
+    - Config Directory: ~/.config/flybrowser
+    - Jupyter Kernel:   ~/.local/share/jupyter/kernels/flybrowser
+    - macOS Service:    ~/Library/LaunchAgents/dev.flybrowser.plist
+    - Linux Service:    /etc/systemd/system/flybrowser.service
 EOF
 }
 
@@ -275,6 +316,10 @@ remove_cli_wrappers() {
 
 # Remove virtual environment
 remove_venv() {
+    if [ "$INSTALL_MODE" != "venv" ]; then
+        return
+    fi
+    
     print_step "Removing virtual environment..."
     
     if [ -d "$VENV_DIR" ]; then
@@ -282,6 +327,70 @@ remove_venv() {
         print_success "Removed $VENV_DIR"
     else
         print_info "Virtual environment not found at $VENV_DIR"
+    fi
+}
+
+# Remove system-wide installation
+remove_system_install() {
+    if [ "$INSTALL_MODE" != "system" ]; then
+        return
+    fi
+    
+    print_step "Removing system-wide installation..."
+    
+    if python3 -c "import flybrowser" 2>/dev/null; then
+        print_info "Uninstalling flybrowser package (system-wide)..."
+        python3 -m pip uninstall -y flybrowser 2>/dev/null || {
+            print_warning "Could not uninstall with pip, trying with PEP 668 flag"
+            python3 -m pip uninstall -y --break-system-packages flybrowser 2>/dev/null || true
+        }
+        print_success "Removed system-wide installation"
+    else
+        print_info "No system-wide installation found"
+    fi
+}
+
+# Remove user installation
+remove_user_install() {
+    if [ "$INSTALL_MODE" != "user" ]; then
+        return
+    fi
+    
+    print_step "Removing user installation..."
+    
+    if python3 -c "import flybrowser" 2>/dev/null; then
+        print_info "Uninstalling flybrowser package (user)..."
+        python3 -m pip uninstall -y flybrowser 2>/dev/null || true
+        print_success "Removed user installation"
+    else
+        print_info "No user installation found"
+    fi
+    
+    # Remove .local/bin scripts if they exist
+    local user_bin="$HOME/.local/bin"
+    if [ -d "$user_bin" ]; then
+        local removed=0
+        for cmd in flybrowser flybrowser-setup flybrowser-serve flybrowser-cluster flybrowser-admin; do
+            if [ -f "$user_bin/$cmd" ]; then
+                rm -f "$user_bin/$cmd"
+                ((removed++))
+            fi
+        done
+        if [ $removed -gt 0 ]; then
+            print_success "Removed $removed command(s) from $user_bin"
+        fi
+    fi
+}
+
+# Remove Jupyter kernel
+remove_jupyter_kernel() {
+    print_step "Checking for Jupyter kernel..."
+    
+    if [ -d "$JUPYTER_KERNEL_DIR" ]; then
+        rm -rf "$JUPYTER_KERNEL_DIR"
+        print_success "Removed Jupyter kernel"
+    else
+        print_info "No Jupyter kernel found"
     fi
 }
 
@@ -348,30 +457,48 @@ main() {
     
     print_banner
     
-    # Check if FlyBrowser is installed
-    local installed=false
-    if [ -d "$VENV_DIR" ] || [ -f "$INSTALL_DIR/flybrowser" ]; then
-        installed=true
-    fi
+    # Detect installation mode
+    detect_install_mode
     
-    if [ "$installed" = false ]; then
+    # Check if FlyBrowser is installed
+    if [ "$INSTALL_MODE" = "none" ]; then
         print_warning "FlyBrowser does not appear to be installed"
-        print_info "Checked: $VENV_DIR"
-        print_info "Checked: $INSTALL_DIR/flybrowser"
+        print_info "Checked: Virtual environment ($VENV_DIR)"
+        print_info "Checked: System Python (python3 -m pip list)"
+        print_info "Checked: User Python (~/.local)"
         exit 0
     fi
+    
+    print_info "Detected installation mode: $INSTALL_MODE"
     
     # Show what will be removed
     echo ""
     print_msg "$BOLD" "The following will be removed:"
     echo ""
     
-    if [ -f "$INSTALL_DIR/flybrowser" ]; then
-        echo "  • CLI commands in $INSTALL_DIR"
-    fi
+    case "$INSTALL_MODE" in
+        venv)
+            if [ -f "$INSTALL_DIR/flybrowser" ]; then
+                echo "  • CLI commands in $INSTALL_DIR"
+            fi
+            if [ -d "$VENV_DIR" ]; then
+                echo "  • Virtual environment: $VENV_DIR"
+            fi
+            ;;
+        system)
+            echo "  • System-wide FlyBrowser package"
+            ;;
+        user)
+            echo "  • User-installed FlyBrowser package (~/.local)"
+            echo "  • CLI commands in ~/.local/bin"
+            ;;
+        *)
+            echo "  • All detected FlyBrowser installations"
+            ;;
+    esac
     
-    if [ -d "$VENV_DIR" ]; then
-        echo "  • Virtual environment: $VENV_DIR"
+    if [ -d "$JUPYTER_KERNEL_DIR" ]; then
+        echo "  • Jupyter kernel"
     fi
     
     local os=$(detect_os)
@@ -406,10 +533,31 @@ main() {
     
     echo ""
     
-    # Perform uninstall
+    # Perform uninstall based on mode
     remove_services
-    remove_cli_wrappers
-    remove_venv
+    
+    case "$INSTALL_MODE" in
+        venv)
+            remove_cli_wrappers
+            remove_venv
+            ;;
+        system)
+            remove_system_install
+            ;;
+        user)
+            remove_user_install
+            ;;
+        *)
+            print_warning "Unknown installation mode, attempting all removal methods"
+            remove_cli_wrappers
+            remove_venv
+            remove_system_install
+            remove_user_install
+            ;;
+    esac
+    
+    # Remove Jupyter kernel if installed
+    remove_jupyter_kernel
     
     # Handle data removal
     if [ "$KEEP_DATA" = false ]; then

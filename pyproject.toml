@@ -78,6 +78,12 @@ repl = [
     "prompt_toolkit>=3.0.0",
 ]
 
+# For Jupyter notebook support (optional)
+jupyter = [
+    "nest_asyncio>=1.5.0",
+    "ipython>=8.0.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
