@@ -44,6 +44,8 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from anthropic import AsyncAnthropic
 
+import os
+
 from flybrowser.exceptions import LLMProviderError
 from flybrowser.llm.base import (
     BaseLLMProvider,
@@ -54,6 +56,7 @@ from flybrowser.llm.base import (
     ToolCall,
     ToolDefinition,
 )
+from flybrowser.llm.provider_status import ProviderStatus
 from flybrowser.utils.logger import logger
 
 
@@ -103,6 +106,28 @@ class AnthropicProvider(BaseLLMProvider):
         """
         super().__init__(model, api_key, **kwargs)
         self.client = AsyncAnthropic(api_key=api_key)
+
+    @classmethod
+    def check_availability(cls) -> ProviderStatus:
+        """
+        Check if Anthropic provider is available.
+
+        Checks for ANTHROPIC_API_KEY environment variable.
+        """
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            return ProviderStatus.ok(
+                name="Anthropic",
+                message="API key configured",
+                api_key_env_var="ANTHROPIC_API_KEY",
+                requires_api_key=True,
+            )
+        return ProviderStatus.info(
+            name="Anthropic",
+            message="API key not set (optional)",
+            api_key_env_var="ANTHROPIC_API_KEY",
+            requires_api_key=True,
+        )
 
     async def generate(
         self,

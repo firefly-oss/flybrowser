@@ -14,7 +14,7 @@
 
 """Factory for creating LLM provider instances."""
 
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from flybrowser.exceptions import ConfigurationError
 from flybrowser.llm.anthropic_provider import AnthropicProvider
@@ -23,6 +23,7 @@ from flybrowser.llm.config import DEFAULT_CONFIGS, LLMProviderConfig, LLMProvide
 from flybrowser.llm.gemini_provider import GeminiProvider
 from flybrowser.llm.ollama_provider import OllamaProvider
 from flybrowser.llm.openai_provider import OpenAIProvider
+from flybrowser.llm.provider_status import ProviderStatus
 
 
 class LLMProviderFactory:
@@ -127,4 +128,60 @@ class LLMProviderFactory:
             List of provider names
         """
         return list(cls._providers.keys())
+
+    @classmethod
+    def get_all_provider_statuses(cls) -> Dict[str, ProviderStatus]:
+        """
+        Get availability status for all registered providers.
+
+        This method dynamically checks each registered provider's availability
+        by calling their check_availability() method.
+
+        Returns:
+            Dictionary mapping provider names to their ProviderStatus
+        """
+        statuses = {}
+        seen_classes = set()  # Avoid duplicate checks for aliases (e.g., google -> gemini)
+
+        for name, provider_class in cls._providers.items():
+            # Skip aliases - only check each provider class once
+            if provider_class in seen_classes:
+                continue
+            seen_classes.add(provider_class)
+
+            try:
+                status = provider_class.check_availability()
+                statuses[name] = status
+            except Exception as e:
+                # If check fails, report it as a warning
+                statuses[name] = ProviderStatus.warn(
+                    name=name.title(),
+                    message=f"Error checking availability: {e}",
+                )
+
+        return statuses
+
+    @classmethod
+    def get_provider_status(cls, provider: str) -> Optional[ProviderStatus]:
+        """
+        Get availability status for a specific provider.
+
+        Args:
+            provider: Provider name
+
+        Returns:
+            ProviderStatus for the provider, or None if not registered
+        """
+        provider_lower = provider.lower()
+        if provider_lower not in cls._providers:
+            return None
+
+        provider_class = cls._providers[provider_lower]
+        try:
+            return provider_class.check_availability()
+        except Exception as e:
+            return ProviderStatus.warn(
+                name=provider.title(),
+                message=f"Error checking availability: {e}",
+            )
 

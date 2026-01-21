@@ -47,9 +47,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import sys
 from pathlib import Path
 from typing import List, Optional
+
+from flybrowser.cli.output import CLIOutput
+from flybrowser.llm.factory import LLMProviderFactory
+from flybrowser.llm.provider_status import ProviderStatusLevel
+from flybrowser.utils.logger import LogFormat, configure_logging
 
 
 def get_version() -> str:
@@ -61,42 +67,22 @@ def get_version() -> str:
         return "unknown"
 
 
+# Global CLI output instance
+cli_output = CLIOutput()
+
+
 def get_banner() -> str:
     """Get the FlyBrowser banner from banner.txt or fallback.
 
     Returns:
         The banner string
     """
-    # Try to load from banner.txt
-    banner_paths = [
-        Path(__file__).parent.parent / "banner.txt",  # flybrowser/banner.txt
-        Path(__file__).parent.parent.parent / "flybrowser" / "banner.txt",
-    ]
-
-    for banner_path in banner_paths:
-        if banner_path.exists():
-            try:
-                return banner_path.read_text()
-            except Exception:
-                pass
-
-    # Fallback banner (matches banner.txt)
-    return r"""  _____.__         ___.
-_/ ____\  | ___.__.\\_ |_________  ______  _  ________ ___________
-\   __\|  |<   |  | | __ \_  __ \/  _ \ \/ \/ /  ___// __ \_  __ \
- |  |  |  |_\___  | | \_\ \  | \(  <_> )     /\___ \\  ___/|  | \/
- |__|  |____/ ____| |___  /__|   \____/ \/\_//____  >\___  >__|
-            \/          \/                        \/     \/"""
+    return cli_output.get_banner()
 
 
 def print_banner() -> None:
     """Print the FlyBrowser banner."""
-    print()
-    print(get_banner())
-    print()
-    print(f"  Browser Automation Powered by LLM Agents")
-    print(f"  Version: {get_version()}")
-    print()
+    cli_output.print_banner(version=get_version())
 
 
 def cmd_version(args: argparse.Namespace) -> int:
@@ -121,41 +107,47 @@ def cmd_version(args: argparse.Namespace) -> int:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Run installation diagnostics."""
-    from flybrowser.cli.setup import verify_installation
+    # Print banner and summary
+    cli_output.print_banner(version=get_version())
     
-    print_banner()
-    print("Running FlyBrowser diagnostics...\n")
+    # Show execution summary
+    cli_output.print_summary("Diagnostics", {
+        "Python": platform.python_version(),
+        "Platform": f"{platform.system()} {platform.machine()}",
+        "Working Dir": str(Path.cwd()),
+    })
     
     checks = []
     
+    cli_output.print_section("System Requirements")
+    
     # Check 1: Python version
-    import platform
     py_version = platform.python_version()
     major, minor = map(int, py_version.split(".")[:2])
     if major >= 3 and minor >= 9:
-        print(f"[OK] Python {py_version}")
+        cli_output.print_status_line("OK", f"Python {py_version}", ok=True)
         checks.append(True)
     else:
-        print(f"[FAIL] Python {py_version} (3.9+ required)")
+        cli_output.print_status_line("FAIL", f"Python {py_version} (3.9+ required)", ok=False)
         checks.append(False)
     
     # Check 2: FlyBrowser import
     try:
         import flybrowser
         version = getattr(flybrowser, "__version__", "unknown")
-        print(f"[OK] FlyBrowser {version} installed")
+        cli_output.print_status_line("OK", f"FlyBrowser {version} installed", ok=True)
         checks.append(True)
     except ImportError as e:
-        print(f"[FAIL] FlyBrowser not installed: {e}")
+        cli_output.print_status_line("FAIL", f"FlyBrowser not installed: {e}", ok=False)
         checks.append(False)
     
     # Check 3: Playwright
     try:
         from playwright.sync_api import sync_playwright
-        print("[OK] Playwright installed")
+        cli_output.print_status_line("OK", "Playwright installed", ok=True)
         checks.append(True)
     except ImportError:
-        print("[FAIL] Playwright not installed")
+        cli_output.print_status_line("FAIL", "Playwright not installed", ok=False)
         print("      Run: pip install playwright && playwright install")
         checks.append(False)
     
@@ -169,48 +161,38 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             timeout=10,
         )
         if result.returncode == 0:
-            print("[OK] Chromium browser available")
+            cli_output.print_status_line("OK", "Chromium browser available", ok=True)
             checks.append(True)
         else:
-            print("[WARN] Chromium may need installation")
+            cli_output.print_status_line("WARN", "Chromium may need installation", warn=True)
             print("       Run: playwright install chromium")
             checks.append(True)  # Not a hard failure
     except Exception:
-        print("[WARN] Could not verify browser installation")
+        cli_output.print_status_line("WARN", "Could not verify browser installation", warn=True)
         checks.append(True)  # Not a hard failure
     
-    # Check 5: LLM providers
-    print("\n--- LLM Provider Status ---")
+    # Check 5: LLM providers (DYNAMIC DISCOVERY)
+    cli_output.print_section("LLM Provider Status")
     
-    # OpenAI
-    if os.environ.get("OPENAI_API_KEY"):
-        print("[OK] OpenAI API key configured")
-    else:
-        print("[INFO] OpenAI API key not set (optional)")
+    # Use dynamic provider discovery from factory
+    provider_statuses = LLMProviderFactory.get_all_provider_statuses()
     
-    # Anthropic
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        print("[OK] Anthropic API key configured")
-    else:
-        print("[INFO] Anthropic API key not set (optional)")
-    
-    # Ollama
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["curl", "-s", "http://localhost:11434/api/tags"],
-            capture_output=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            print("[OK] Ollama running at localhost:11434")
+    for name, status in provider_statuses.items():
+        if status.level == ProviderStatusLevel.OK:
+            cli_output.print_status_line("OK", f"{status.name}: {status.message}", ok=True)
+        elif status.level == ProviderStatusLevel.INFO:
+            cli_output.print_status_line("INFO", f"{status.name}: {status.message}", info=True)
+        elif status.level == ProviderStatusLevel.WARN:
+            cli_output.print_status_line("WARN", f"{status.name}: {status.message}", warn=True)
         else:
-            print("[INFO] Ollama not running (optional)")
-    except Exception:
-        print("[INFO] Ollama not detected (optional)")
+            cli_output.print_status_line("FAIL", f"{status.name}: {status.message}", ok=False)
+    
+    # Show all registered providers
+    all_providers = LLMProviderFactory.list_providers()
+    print(f"\n  Registered providers: {', '.join(all_providers)}")
     
     # Check 6: Config files
-    print("\n--- Configuration ---")
+    cli_output.print_section("Configuration")
     config_paths = [
         Path.cwd() / ".env",
         Path.home() / ".flybrowser" / "config",
@@ -220,24 +202,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     found_config = False
     for config_path in config_paths:
         if config_path.exists():
-            print(f"[OK] Config found: {config_path}")
+            cli_output.print_status_line("OK", f"Config found: {config_path}", ok=True)
             found_config = True
             break
     
     if not found_config:
-        print("[INFO] No config file found (using defaults)")
+        cli_output.print_status_line("INFO", "No config file found (using defaults)", info=True)
         print("       Run 'flybrowser setup configure' to create one")
     
     # Summary
-    print("\n" + "=" * 50)
+    cli_output.print_section("Summary")
+    cli_output.print_divider("=")
     if all(checks):
-        print("[SUCCESS] All checks passed!")
+        cli_output.print_status_line("SUCCESS", "All checks passed!", ok=True)
         print("\nYou're ready to use FlyBrowser. Try:")
         print("  flybrowser repl         # Interactive mode")
         print("  flybrowser serve        # Start service")
         return 0
     else:
-        print("[FAIL] Some checks failed. Please fix the issues above.")
+        cli_output.print_status_line("FAIL", "Some checks failed. Please fix the issues above.", ok=False)
         return 1
 
 
@@ -246,7 +229,23 @@ def cmd_repl(args: argparse.Namespace) -> int:
     try:
         from flybrowser.cli.repl import FlyBrowserREPL
         
-        print_banner()
+        # Apply logging config if specified
+        if hasattr(args, 'log_level') and args.log_level:
+            configure_logging(
+                level=args.log_level,
+                human_readable=getattr(args, 'human_readable', False),
+            )
+        
+        cli_output.print_banner(version=get_version())
+        
+        # Show execution summary
+        cli_output.print_summary("REPL Session", {
+            "Provider": args.provider,
+            "Model": args.model or "(default)",
+            "Headless": args.headless,
+        })
+        
+        cli_output.print_logs_header()
         
         repl = FlyBrowserREPL(
             llm_provider=args.provider,
@@ -339,6 +338,20 @@ Examples:
 
 Documentation: https://flybrowser.dev/docs
 """,
+    )
+    
+    # Global logging options
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default=os.environ.get("FLYBROWSER_LOG_LEVEL", "INFO"),
+        help="Set logging level (default: INFO)",
+    )
+    parser.add_argument(
+        "--human-readable", "--human",
+        action="store_true",
+        default=os.environ.get("FLYBROWSER_LOG_FORMAT", "json").lower() == "human",
+        help="Use human-readable log format instead of JSON",
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -439,6 +452,12 @@ def main() -> None:
     
     # Parse only the known args to allow pass-through for subcommands
     args, remaining = parser.parse_known_args()
+    
+    # Apply logging configuration
+    configure_logging(
+        level=getattr(args, 'log_level', 'INFO'),
+        human_readable=getattr(args, 'human_readable', False),
+    )
     
     # Handle commands that need pass-through
     if args.command == "setup":

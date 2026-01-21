@@ -44,6 +44,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 from flybrowser.llm.cache import LLMCache
 from flybrowser.llm.config import LLMProviderConfig
 from flybrowser.llm.cost_tracker import CostTracker
+from flybrowser.llm.provider_status import ProviderStatus
 from flybrowser.llm.rate_limiter import RateLimiter
 from flybrowser.llm.retry import RetryHandler
 from flybrowser.utils.logger import logger
@@ -581,6 +582,29 @@ class BaseLLMProvider(ABC):
             stats["rate_limit"] = self.rate_limiter.get_stats()
 
         return stats
+
+    @classmethod
+    def check_availability(cls) -> ProviderStatus:
+        """
+        Check if this provider is available and properly configured.
+
+        This method should be overridden by each provider to check:
+        - API key configuration (if required)
+        - Connectivity to the service (for local providers)
+        - Any other provider-specific requirements
+
+        Returns:
+            ProviderStatus object with availability information
+
+        Note:
+            Default implementation returns INFO status indicating
+            the provider hasn't implemented availability checking.
+        """
+        provider_name = cls.__name__.replace("Provider", "")
+        return ProviderStatus.info(
+            name=provider_name,
+            message="Availability check not implemented",
+        )
 
     def _normalize_images(
         self, image_data: Union[bytes, ImageInput, List[ImageInput]]

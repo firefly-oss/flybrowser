@@ -49,6 +49,8 @@ import json
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 import aiohttp
+import urllib.request
+import urllib.error
 
 from flybrowser.exceptions import LLMProviderError
 from flybrowser.llm.base import (
@@ -58,6 +60,7 @@ from flybrowser.llm.base import (
     ModelCapability,
     ModelInfo,
 )
+from flybrowser.llm.provider_status import ProviderStatus
 from flybrowser.utils.logger import logger
 
 
@@ -122,6 +125,40 @@ class OllamaProvider(BaseLLMProvider):
         """
         super().__init__(model, api_key, **kwargs)
         self.base_url = base_url.rstrip("/")
+
+    @classmethod
+    def check_availability(cls, base_url: str = "http://localhost:11434") -> ProviderStatus:
+        """
+        Check if Ollama provider is available.
+
+        Checks connectivity to the Ollama server.
+        """
+        try:
+            url = f"{base_url}/api/tags"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as response:
+                if response.status == 200:
+                    return ProviderStatus.ok(
+                        name="Ollama",
+                        message=f"Running at {base_url}",
+                        requires_api_key=False,
+                        base_url=base_url,
+                        connectivity_checked=True,
+                        connectivity_ok=True,
+                    )
+        except urllib.error.URLError:
+            pass
+        except Exception:
+            pass
+
+        return ProviderStatus.info(
+            name="Ollama",
+            message="Not running (optional)",
+            requires_api_key=False,
+            base_url=base_url,
+            connectivity_checked=True,
+            connectivity_ok=False,
+        )
 
     async def generate(
         self,

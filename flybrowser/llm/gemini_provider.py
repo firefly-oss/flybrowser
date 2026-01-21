@@ -41,6 +41,8 @@ import base64
 import json
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
+import os
+
 import aiohttp
 
 from flybrowser.exceptions import LLMProviderError
@@ -53,6 +55,7 @@ from flybrowser.llm.base import (
     ToolCall,
     ToolDefinition,
 )
+from flybrowser.llm.provider_status import ProviderStatus
 from flybrowser.utils.logger import logger
 
 
@@ -101,6 +104,28 @@ class GeminiProvider(BaseLLMProvider):
         """
         super().__init__(model, api_key, **kwargs)
         self.base_url = base_url.rstrip("/")
+
+    @classmethod
+    def check_availability(cls) -> ProviderStatus:
+        """
+        Check if Gemini provider is available.
+
+        Checks for GOOGLE_API_KEY or GEMINI_API_KEY environment variable.
+        """
+        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        if api_key:
+            return ProviderStatus.ok(
+                name="Gemini",
+                message="API key configured",
+                api_key_env_var="GOOGLE_API_KEY",
+                requires_api_key=True,
+            )
+        return ProviderStatus.info(
+            name="Gemini",
+            message="API key not set (optional)",
+            api_key_env_var="GOOGLE_API_KEY",
+            requires_api_key=True,
+        )
 
     async def _make_request(
         self,

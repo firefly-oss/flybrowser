@@ -45,6 +45,8 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from openai import AsyncOpenAI
 
+import os
+
 from flybrowser.exceptions import LLMProviderError
 from flybrowser.llm.base import (
     BaseLLMProvider,
@@ -55,6 +57,7 @@ from flybrowser.llm.base import (
     ToolCall,
     ToolDefinition,
 )
+from flybrowser.llm.provider_status import ProviderStatus
 from flybrowser.utils.logger import logger
 
 
@@ -100,6 +103,28 @@ class OpenAIProvider(BaseLLMProvider):
         """
         super().__init__(model, api_key, **kwargs)
         self.client = AsyncOpenAI(api_key=api_key)
+
+    @classmethod
+    def check_availability(cls) -> ProviderStatus:
+        """
+        Check if OpenAI provider is available.
+
+        Checks for OPENAI_API_KEY environment variable.
+        """
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            return ProviderStatus.ok(
+                name="OpenAI",
+                message="API key configured",
+                api_key_env_var="OPENAI_API_KEY",
+                requires_api_key=True,
+            )
+        return ProviderStatus.info(
+            name="OpenAI",
+            message="API key not set (optional)",
+            api_key_env_var="OPENAI_API_KEY",
+            requires_api_key=True,
+        )
 
     async def generate(
         self,
