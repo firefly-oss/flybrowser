@@ -918,9 +918,18 @@ class FlyBrowser:
         if self._active_stream_id:
             raise RuntimeError("Stream already active. Stop current stream first.")
         
-        # Initialize streaming manager if not exists
+        # Start local HTTP server FIRST to get the port
+        if not self._local_stream_server and stream_protocol in [StreamingProtocol.HLS, StreamingProtocol.DASH]:
+            await self._start_local_stream_server(stream_dir)
+        
+        # Initialize streaming manager with correct base URL
         if not self._streaming_manager:
-            self._streaming_manager = StreamingManager(max_concurrent_streams=1)
+            base_url = f"http://localhost:{self._local_stream_port}" if self._local_stream_port else None
+            self._streaming_manager = StreamingManager(
+                output_dir=str(stream_dir),
+                base_url=base_url,
+                max_concurrent_streams=1
+            )
         
         # Convert protocol string to enum
         protocol_map = {
@@ -986,11 +995,7 @@ class FlyBrowser:
                 config=config,
             )
             
-            # Start local HTTP server if not already running (for serving HLS/DASH files)
-            if not self._local_stream_server and stream_protocol in [StreamingProtocol.HLS, StreamingProtocol.DASH]:
-                await self._start_local_stream_server(stream_dir)
-            
-            # Return stream information
+            # Return stream information with correct local URLs
             result = {
                 "stream_id": stream_info.stream_id,
                 "session_id": stream_info.session_id,
@@ -1002,6 +1007,7 @@ class FlyBrowser:
                 "dash_url": stream_info.dash_url,
                 "rtmp_url": stream_info.rtmp_url,
                 "stream_url": stream_info.hls_url or stream_info.dash_url or stream_info.rtmp_url,
+                "local_server_port": self._local_stream_port,  # For debugging
             }
             
             logger.info(f"Embedded stream started: {stream_info.stream_id}")
@@ -1098,7 +1104,7 @@ class FlyBrowser:
         await site.start()
         
         self._local_stream_server = runner
-        logger.info(f"Local stream server started on port {port}")
+        logger.info(f"Local stream server started on http://localhost:{port}")
     
     async def _capture_frames_for_stream(self, stream_id: str) -> None:
         """Capture browser frames and send to stream.
