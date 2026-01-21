@@ -41,9 +41,11 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from flybrowser.agents.base_agent import BaseAgent
+from flybrowser.agents.validation_agent import ResponseValidator
 from flybrowser.exceptions import ActionError, ElementNotFoundError
 from flybrowser.llm.prompts import ACTION_PLANNING_PROMPT, ACTION_PLANNING_SYSTEM
 from flybrowser.utils.logger import logger
+from flybrowser.utils.timing import StepTimer
 
 
 class ActionType(str, Enum):
@@ -163,6 +165,7 @@ class ActionAgent(BaseAgent):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.action_timeout = action_timeout
+        self.validator = ResponseValidator(llm_provider)
 
     async def execute(
         self,
@@ -208,12 +211,25 @@ class ActionAgent(BaseAgent):
             ... )
             >>> print(result["plan"])  # See planned actions without executing
         """
+        # Start timing
+        timer = StepTimer()
+        timer.start()
+        
         try:
             # Mask instruction for logging to avoid exposing PII
             logger.info(f"Executing action: {self.mask_for_log(instruction)}")
 
             # Plan the actions (instruction is masked for LLM in _plan_actions)
+            timer.start_step("planning")
             plan = await self._plan_actions(instruction, use_vision)
+            timer.end_step("planning")
+            
+            # Log planned steps before execution
+            plan_summary = ", ".join([
+                f"{i+1}. [{step.action_type.value}] {step.target or '(no target)'}"
+                for i, step in enumerate(plan)
+            ])
+            logger.info(f"Planned {len(plan)} action steps: {plan_summary}")
 
             if dry_run:
                 return {
@@ -222,10 +238,13 @@ class ActionAgent(BaseAgent):
                     "total_steps": len(plan),
                     "plan": [self._step_to_dict(step) for step in plan],
                     "dry_run": True,
+                    "timing": timer.get_timings().to_dict(),
                 }
 
             # Execute the plan
+            timer.start_step("execution")
             result = await self._execute_plan(plan, use_vision)
+            timer.end_step("execution")
 
             logger.info(
                 f"Action completed: {result.steps_completed}/{result.total_steps} steps"
@@ -238,6 +257,7 @@ class ActionAgent(BaseAgent):
                 "plan": [self._step_to_dict(step) for step in plan],
                 "error": result.error,
                 "details": result.details,
+                "timing": timer.get_timings().to_dict(),
             }
 
         except Exception as e:
@@ -250,6 +270,7 @@ class ActionAgent(BaseAgent):
                 "plan": [],
                 "error": str(e),
                 "details": {"exception_type": type(e).__name__},
+                "timing": timer.get_timings().to_dict(),
             }
 
     async def _plan_actions(
@@ -314,21 +335,23 @@ class ActionAgent(BaseAgent):
                 system_prompt=ACTION_PLANNING_SYSTEM,
                 temperature=0.3,
             )
-            try:
-                result = json.loads(response.content)
-            except json.JSONDecodeError:
-                result = await self.llm.generate_structured(
-                    prompt=prompt,
-                    schema=schema,
-                    system_prompt=ACTION_PLANNING_SYSTEM,
-                    temperature=0.3,
-                )
+            # Validate and fix response
+            result = await self.validator.validate_and_fix(
+                response.content,
+                schema,
+                context=f"Planning actions for: {safe_instruction}"
+            )
         else:
-            result = await self.llm.generate_structured(
+            response = await self.llm.generate(
                 prompt=prompt,
-                schema=schema,
                 system_prompt=ACTION_PLANNING_SYSTEM,
                 temperature=0.3,
+            )
+            # Validate and fix response
+            result = await self.validator.validate_and_fix(
+                response.content,
+                schema,
+                context=f"Planning actions for: {safe_instruction}"
             )
 
         # Convert to ActionStep objects

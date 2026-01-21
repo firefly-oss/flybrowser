@@ -448,7 +448,284 @@ Documentation: https://flybrowser.dev/docs
         add_help=False,
     )
     
+    # stream command
+    stream_parser = subparsers.add_parser(
+        "stream",
+        help="Manage live streams",
+    )
+    stream_subparsers = stream_parser.add_subparsers(dest="stream_command", help="Stream commands")
+    
+    # stream start
+    stream_start_parser = stream_subparsers.add_parser("start", help="Start a stream")
+    stream_start_parser.add_argument("session_id", help="Session ID")
+    stream_start_parser.add_argument("--protocol", default="hls", choices=["hls", "dash", "rtmp"], help="Streaming protocol")
+    stream_start_parser.add_argument("--quality", default="medium", choices=["low_bandwidth", "medium", "high"], help="Quality profile")
+    stream_start_parser.add_argument("--codec", default="h264", choices=["h264", "h265", "vp9"], help="Video codec")
+    stream_start_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    stream_start_parser.set_defaults(func=cmd_stream_start)
+    
+    # stream stop
+    stream_stop_parser = stream_subparsers.add_parser("stop", help="Stop a stream")
+    stream_stop_parser.add_argument("session_id", help="Session ID")
+    stream_stop_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    stream_stop_parser.set_defaults(func=cmd_stream_stop)
+    
+    # stream status
+    stream_status_parser = stream_subparsers.add_parser("status", help="Get stream status")
+    stream_status_parser.add_argument("session_id", help="Session ID")
+    stream_status_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    stream_status_parser.set_defaults(func=cmd_stream_status)
+    
+    # stream url
+    stream_url_parser = stream_subparsers.add_parser("url", help="Get stream URL")
+    stream_url_parser.add_argument("session_id", help="Session ID")
+    stream_url_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    stream_url_parser.set_defaults(func=cmd_stream_url)
+    
+    # recordings command
+    recordings_parser = subparsers.add_parser(
+        "recordings",
+        help="Manage recordings",
+    )
+    recordings_subparsers = recordings_parser.add_subparsers(dest="recordings_command", help="Recordings commands")
+    
+    # recordings list
+    recordings_list_parser = recordings_subparsers.add_parser("list", help="List recordings")
+    recordings_list_parser.add_argument("--session-id", help="Filter by session ID")
+    recordings_list_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    recordings_list_parser.set_defaults(func=cmd_recordings_list)
+    
+    # recordings download
+    recordings_download_parser = recordings_subparsers.add_parser("download", help="Download a recording")
+    recordings_download_parser.add_argument("recording_id", help="Recording ID")
+    recordings_download_parser.add_argument("--output", "-o", default="recording.mp4", help="Output file path")
+    recordings_download_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    recordings_download_parser.set_defaults(func=cmd_recordings_download)
+    
+    # recordings delete
+    recordings_delete_parser = recordings_subparsers.add_parser("delete", help="Delete a recording")
+    recordings_delete_parser.add_argument("recording_id", help="Recording ID")
+    recordings_delete_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    recordings_delete_parser.set_defaults(func=cmd_recordings_delete)
+    
+    # recordings clean
+    recordings_clean_parser = recordings_subparsers.add_parser("clean", help="Clean old recordings")
+    recordings_clean_parser.add_argument("--older-than", default="7d", help="Delete recordings older than (e.g., 7d, 30d)")
+    recordings_clean_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    recordings_clean_parser.set_defaults(func=cmd_recordings_clean)
+    
     return parser
+
+
+def cmd_stream_start(args):
+    """Start a stream"""
+    import requests
+    import json
+    
+    endpoint = args.endpoint.rstrip("/")
+    url = f"{endpoint}/sessions/{args.session_id}/stream/start"
+    
+    payload = {
+        "protocol": args.protocol,
+        "quality": args.quality,
+        "codec": args.codec,
+    }
+    
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        result = response.json()
+        print(json.dumps(result, indent=2))
+        return 0
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_stream_stop(args):
+    """Stop a stream"""
+    import requests
+    import json
+    
+    endpoint = args.endpoint.rstrip("/")
+    url = f"{endpoint}/sessions/{args.session_id}/stream/stop"
+    
+    try:
+        response = requests.post(url)
+        response.raise_for_status()
+        result = response.json()
+        print(json.dumps(result, indent=2))
+        return 0
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_stream_status(args):
+    """Get stream status"""
+    import requests
+    import json
+    
+    endpoint = args.endpoint.rstrip("/")
+    url = f"{endpoint}/sessions/{args.session_id}/stream/status"
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        result = response.json()
+        print(json.dumps(result, indent=2))
+        return 0
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_stream_url(args):
+    """Get stream URL"""
+    import requests
+    
+    endpoint = args.endpoint.rstrip("/")
+    url = f"{endpoint}/sessions/{args.session_id}/stream/status"
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        result = response.json()
+        
+        if "stream_url" in result:
+            print(result["stream_url"])
+            return 0
+        else:
+            print("Stream not found or not active")
+            return 1
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_recordings_list(args):
+    """List recordings"""
+    import requests
+    import json
+    
+    endpoint = args.endpoint.rstrip("/")
+    url = f"{endpoint}/recordings"
+    
+    params = {}
+    if hasattr(args, 'session_id') and args.session_id:
+        params['session_id'] = args.session_id
+    
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        result = response.json()
+        print(json.dumps(result, indent=2))
+        return 0
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_recordings_download(args):
+    """Download a recording"""
+    import requests
+    import json
+    from pathlib import Path
+    
+    endpoint = args.endpoint.rstrip("/")
+    url = f"{endpoint}/recordings/{args.recording_id}/download"
+    
+    try:
+        # Get download info
+        response = requests.get(url)
+        response.raise_for_status()
+        result = response.json()
+        
+        download_url = result.get("url")
+        if not download_url:
+            print("Error: No download URL available")
+            return 1
+        
+        # Download file
+        print(f"Downloading to {args.output}...")
+        download_response = requests.get(download_url, stream=True)
+        download_response.raise_for_status()
+        
+        total_size = int(download_response.headers.get('content-length', 0))
+        output_path = Path(args.output)
+        
+        with open(output_path, 'wb') as f:
+            downloaded = 0
+            for chunk in download_response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0:
+                        progress = (downloaded / total_size) * 100
+                        print(f"\rProgress: {progress:.1f}%", end='', flush=True)
+        
+        print(f"\nDownloaded successfully to {output_path}")
+        return 0
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_recordings_delete(args):
+    """Delete a recording"""
+    import requests
+    
+    endpoint = args.endpoint.rstrip("/")
+    url = f"{endpoint}/recordings/{args.recording_id}"
+    
+    try:
+        response = requests.delete(url)
+        response.raise_for_status()
+        print(f"Recording {args.recording_id} deleted successfully")
+        return 0
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_recordings_clean(args):
+    """Clean old recordings"""
+    import requests
+    import json
+    from datetime import datetime, timedelta
+    import re
+    
+    endpoint = args.endpoint.rstrip("/")
+    
+    # Parse --older-than argument (e.g., "7d", "30d")
+    match = re.match(r'(\d+)d', args.older_than)
+    if not match:
+        print("Error: Invalid format for --older-than. Use format like '7d' or '30d'")
+        return 1
+    
+    days = int(match.group(1))
+    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    
+    try:
+        # List all recordings
+        response = requests.get(f"{endpoint}/recordings")
+        response.raise_for_status()
+        result = response.json()
+        
+        deleted_count = 0
+        for recording in result.get('recordings', []):
+            recording_date = datetime.fromisoformat(recording['created_at'].replace('Z', '+00:00'))
+            if recording_date < cutoff_date:
+                delete_response = requests.delete(f"{endpoint}/recordings/{recording['id']}")
+                if delete_response.status_code == 200:
+                    deleted_count += 1
+                    print(f"Deleted: {recording['id']} (created {recording['created_at']})")
+        
+        print(f"\nCleaned {deleted_count} recordings older than {days} days")
+        return 0
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
 
 
 def main() -> None:
