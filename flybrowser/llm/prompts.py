@@ -117,37 +117,36 @@ You will be provided with:
 
 EXTRACTION RULES:
 ✓ Extract ACTUAL CONTENT from the page (visible text, numbers, headings)
-✓ Return REAL VALUES you see on the page
+✓ Return REAL VALUES you see on the page - NOT placeholder examples
 ✓ Structure as clear, simple JSON
 ✗ DO NOT return schema definitions or descriptions
+✗ DO NOT return placeholder/dummy/example data
 ✗ DO NOT return HTML attributes, IDs, classes
 ✗ DO NOT return URL parameters or technical metadata
 ✗ DO NOT explain or add commentary
 
 OUTPUT FORMAT:
-ALWAYS use this structure:
+Return extracted data directly as properties. For lists, use arrays.
+
+EXAMPLE FORMATS (use real data from the page, NOT these placeholder values):
+
+IF extracting product:
+{"product_name": "<actual product name from page>", "price": <actual price>}
+
+IF extracting article:
+{"title": "<actual article title from page>", "author": "<actual author name>"}
+
+IF extracting list of items:
 {
-  "extracted_data": <your extracted data here>
+  "items": [
+    {"title": "<real title from page>", "score": <real score>},
+    {"title": "<real title from page>", "score": <real score>}
+  ]
 }
 
-- For SINGLE items, use an object
-- For MULTIPLE items, use an array
-- Put ACTUAL VALUES from the page, not descriptions
-
-GOOD EXAMPLES:
-Query: "Get product name and price"
-{
-  "extracted_data": {
-    "product_name": "Blue Widget",
-    "price": 29.99
-  }
-}
-
-Query: "Extract article title and author"
-{
-  "extracted_data": {
-    "title": "How to Use Web Scraping",
-    "author": "Jane Smith"
+WARNING: The values in angle brackets <> are placeholders showing structure only.
+You MUST replace them with ACTUAL text and numbers visible on the current page.
+NEVER return placeholder text like "First Item", "Second Item", etc.
   }
 }
 
@@ -203,47 +202,44 @@ OUTPUT FORMAT - ALWAYS use this structure:
   "reasoning": "Brief explanation"
 }
 
-GOOD EXAMPLES:
-Instruction: "Click the login button"
-{
-  "actions": [
-    {"action_type": "click", "target": "login button", "value": null, "options": {}}
-  ],
-  "reasoning": "Click the login button to proceed"
-}
+IMPORTANT STEPS FOR COMPLEX PAGES:
+1. FIRST: Check for cookie consent popups, overlays, or modals - dismiss them first
+2. THEN: Perform the requested action
+3. If an element is blocked, look for close/dismiss/accept buttons first
 
-Instruction: "Search for 'python tutorial'"
-{
-  "actions": [
-    {"action_type": "click", "target": "search input box", "value": null, "options": {}},
-    {"action_type": "type", "target": "search input", "value": "python tutorial", "options": {}},
-    {"action_type": "press_key", "target": "search input", "value": "Enter", "options": {}}
-  ],
-  "reasoning": "Click search box, type query, press Enter to submit"
-}
+EXAMPLE FORMATS (adapt to actual page elements):
 
-Instruction: "Fill form with name John Doe and email john@test.com"
-{
-  "actions": [
-    {"action_type": "fill", "target": "name input field", "value": "John Doe", "options": {}},
-    {"action_type": "fill", "target": "email input field", "value": "john@test.com", "options": {}}
-  ],
-  "reasoning": "Fill the form fields with provided information"
-}
+Simple click:
+{"actions": [{"action_type": "click", "target": "<actual button/link description>", "value": null, "options": {}}], "reasoning": "<brief explanation>"}
 
-BAD EXAMPLES (DO NOT DO THIS):
+Search action:
+{"actions": [{"action_type": "click", "target": "<search input on page>"}, {"action_type": "type", "target": "search input", "value": "<user's query>"}, {"action_type": "press_key", "value": "Enter"}], "reasoning": "<explanation>"}
+
+Form fill:
+{"actions": [{"action_type": "fill", "target": "<field description>", "value": "<user provided value>"}], "reasoning": "<explanation>"}
+
+With cookie popup:
+{"actions": [{"action_type": "click", "target": "accept cookies button"}, {"action_type": "click", "target": "<main action target>"}], "reasoning": "First dismiss cookie popup, then proceed"}
+
+NOTE: Values in <> are placeholders. Use actual element descriptions from the page.
+
+WARNING - THESE ARE WRONG:
 {
   "type": "object",
   "properties": {...}
 }
+^ NEVER return a schema definition. Return actual actions.
 
 {
-  "actions": {
-    "description": "The actions array"
-  }
+  "actions": {"description": "..."}
 }
+^ NEVER return descriptions. Return actual action steps.
 
-CRITICAL: Return ONLY valid JSON with actual action steps. No markdown, no explanations outside JSON, no schema definitions.
+CRITICAL:
+- Return ONLY valid JSON with actual action steps
+- NEVER return JSON schema definitions (no "type": "object", no "properties")
+- Handle popups/modals/overlays FIRST before main action
+- Use actual element descriptions visible on the page
 Start with { and end with } - nothing else.
 """
 

@@ -212,6 +212,7 @@ class ResponseValidator:
         - Arrays with item schemas
         - Min/max properties
         - Additional properties
+        - Rejection of schema-like responses
         
         Args:
             data: Data to validate
@@ -221,6 +222,10 @@ class ResponseValidator:
         Returns:
             True if valid, False otherwise
         """
+        # First check: Reject if response is itself a schema definition
+        if isinstance(data, dict) and self._is_schema_definition(data):
+            logger.warning(f"{path}: Response appears to be a schema definition, not actual data")
+            return False
         # Handle type validation
         expected_type = schema.get("type")
         if expected_type:
@@ -324,6 +329,68 @@ class ResponseValidator:
             return False
         
         return True
+    
+    def _is_schema_definition(self, data: Dict[str, Any]) -> bool:
+        """
+        Detect if a response is actually a JSON schema definition instead of data.
+        
+        Args:
+            data: Dictionary to check
+            
+        Returns:
+            True if data looks like a schema definition
+        """
+        # Check for schema keywords at the root level
+        schema_keywords = ["type", "properties", "required", "items", "additionalProperties", "$schema"]
+        schema_type_values = ["object", "array", "string", "number", "boolean", "null", "integer"]
+        
+        # If 'type' key exists with a schema type value, it's likely a schema
+        if "type" in data:
+            type_val = data["type"]
+            if isinstance(type_val, str) and type_val in schema_type_values:
+                # Check if it has other schema keywords
+                if "properties" in data or "items" in data or "required" in data:
+                    return True
+        
+        # Check if 'properties' contains nested type definitions
+        if "properties" in data and isinstance(data["properties"], dict):
+            for prop_val in data["properties"].values():
+                if isinstance(prop_val, dict) and "type" in prop_val:
+                    return True
+        
+        return False
+    
+    def _describe_expected_data(self, schema: Dict[str, Any], context: Optional[str]) -> str:
+        """
+        Describe what data is expected without showing the schema structure.
+        
+        Args:
+            schema: JSON schema
+            context: Optional context about the task
+            
+        Returns:
+            Human-readable description of expected data
+        """
+        description = "What you need to return:\n"
+        
+        if context:
+            description += f"Task: {context}\n"
+        
+        # Check for common patterns
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        
+        if "extracted_data" in properties:
+            description += "- A JSON object with 'extracted_data' containing the actual information from the page\n"
+        elif "actions" in properties:
+            description += "- A JSON object with 'actions' array containing the specific actions to take\n"
+        elif "conditions" in properties:
+            description += "- A JSON object with 'conditions' array describing what to monitor\n"
+        else:
+            description += f"- A JSON object with these fields: {', '.join(required)}\n"
+        
+        description += "\nRemember: Use REAL data from the page, not placeholders or schema definitions."
+        return description
         
         
     async def _ask_llm_to_fix(
@@ -345,24 +412,27 @@ class ResponseValidator:
         Returns:
             Fixed response from LLM
         """
-        fix_prompt = f"""The previous response was not valid JSON or didn't match the expected format.
+        # Extract just the data requirements from schema, not the structure
+        data_description = self._describe_expected_data(schema, context)
+        
+        fix_prompt = f"""Your previous response was not valid. You returned schema/structure instead of actual data.
 
-Previous response:
+Previous attempt:
 {malformed_response[:500]}
 
-Expected JSON schema:
-{json.dumps(schema, indent=2)}
+{data_description}
 
-{f"Context: {context}" if context else ""}
+CRITICAL INSTRUCTIONS:
+1. Return ACTUAL DATA from the page, NOT a schema definition
+2. Do NOT return anything with "type": "object" or "properties"
+3. Do NOT return angle brackets like <placeholder>
+4. Do NOT return example/dummy data
+5. Extract REAL values visible on the current page
 
-Please provide ONLY a valid JSON object that matches the schema. Do not include:
-- Explanations or reasoning
-- Markdown code blocks
-- Any text before or after the JSON
+Respond with ONLY valid JSON containing actual data.
+Start with {{ and end with }}. No markdown, no explanations.
 
-Respond with ONLY the JSON object, starting with {{ and ending with }}.
-
-Attempt {attempt}/3 - This is critical. JSON only."""
+Attempt {attempt}/3 - Return real data now."""
 
         try:
             response = await self.llm.generate(
