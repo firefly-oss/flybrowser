@@ -98,9 +98,12 @@ stream = await browser.start_stream(
 print(f"Watch at: {stream['stream_url']}")
 # Works in ALL modes: embedded, standalone, cluster
 
-# Monitor stream health
+# Monitor stream health (nested structure)
 status = await browser.get_stream_status()
-print(f"FPS: {status['current_fps']}, Health: {status['health']}")
+if status.get('active'):
+    stream_data = status.get('status', {})
+    metrics = stream_data.get('metrics', {})
+    print(f"FPS: {metrics.get('current_fps')}, Health: {stream_data.get('health')}")
 
 # Stream to Twitch/YouTube
 stream = await browser.start_stream(

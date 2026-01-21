@@ -102,8 +102,14 @@ async with FlyBrowser() as browser:
     await browser.act("scroll down slowly")
     
     # Stop stream
-    stats = await browser.stop_stream()
-    print(f"Streamed {stats['frames_sent']} frames")
+    result = await browser.stop_stream()
+    print(f"Stream stopped: {result.get('success')}")
+    
+    # Access final stats if available
+    if result.get('info'):
+        final_metrics = result['info'].get('metrics', {})
+        print(f"Total frames: {final_metrics.get('frames_sent', 0)}")
+        print(f"Total bytes: {final_metrics.get('bytes_sent', 0)}")
 ```
 
 ### Embedded Mode Streaming
@@ -130,14 +136,51 @@ Monitor stream health and performance:
 ```python path=null start=null
 status = await browser.get_stream_status()
 
-print(f"Active: {status['active']}")
-print(f"Health: {status['health']}")  # healthy, degraded, unhealthy
-print(f"FPS: {status['current_fps']}")
-print(f"Bitrate: {status['current_bitrate']} kbps")
-print(f"Frames sent: {status['frames_sent']}")
-print(f"Bytes sent: {status['bytes_sent']}")
-print(f"Viewers: {status['viewer_count']}")
-print(f"Buffer health: {status['buffer_health']}%")
+# Status has nested structure
+print(f"Active: {status.get('active')}")
+
+# Access nested stream data
+if status.get('active'):
+    stream_data = status.get('status', {})
+    print(f"Stream ID: {stream_data.get('stream_id')}")
+    print(f"State: {stream_data.get('state')}")  # active, paused, stopped
+    print(f"Health: {stream_data.get('health')}")  # healthy, degraded, unhealthy
+    print(f"Uptime: {stream_data.get('uptime_seconds')}s")
+    
+    # Access metrics
+    metrics = stream_data.get('metrics', {})
+    print(f"FPS: {metrics.get('current_fps')}")
+    print(f"Bitrate: {metrics.get('current_bitrate')} bps")
+    print(f"Frames sent: {metrics.get('frames_sent')}")
+    print(f"Bytes sent: {metrics.get('bytes_sent')}")
+    print(f"Viewers: {metrics.get('viewer_count')}")
+    print(f"Buffer health: {metrics.get('buffer_health')}%")
+else:
+    print("No active stream")
+```
+
+**Safe Access Pattern** (recommended):
+
+```python path=null start=null
+from pprint import pprint
+
+# Get status
+status = await browser.get_stream_status()
+
+# Print full structure to inspect
+pprint(status)
+
+# Safe nested access with .get() and defaults
+stream_info = status.get('status', {})
+metrics = stream_info.get('metrics', {})
+
+print(f"📊 Stream Metrics:")
+print(f"  Active: {status.get('active', False)}")
+print(f"  State: {stream_info.get('state', 'unknown')}")
+print(f"  Health: {stream_info.get('health', 'unknown')}")
+print(f"  FPS: {metrics.get('current_fps', 0):.1f}")
+print(f"  Bitrate: {metrics.get('current_bitrate', 0):.0f} bps")
+print(f"  Viewers: {metrics.get('viewer_count', 0)}")
 ```
 
 ### RTMP Streaming
