@@ -1,0 +1,107 @@
+[project]
+name = "flybrowser"
+version = "1.26.1"
+description = "A browser automation and web scraping framework driven by LLM agents"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Firefly Software Solutions Inc", email = "info@flybrowser.dev"}
+]
+keywords = ["browser-automation", "web-scraping", "llm", "ai-agents", "playwright"]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "playwright>=1.40.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+    "pillow>=10.0.0",
+    "aiohttp>=3.9.0",
+    "python-dotenv>=1.0.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=4.9.0",
+    "pyyaml>=6.0.0",
+    "jinja2>=3.1.0",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "grpcio>=1.59.0",
+    "grpcio-tools>=1.59.0",
+    "redis>=5.0.0",
+    "prometheus-client>=0.19.0",
+    "cryptography>=41.0.0",
+    "psutil>=5.9.0",
+]
+
+[project.urls]
+Homepage = "https://flybrowser.dev"
+Documentation = "https://flybrowser.dev/docs"
+Repository = "https://github.com/firefly-oss/flybrowsers"
+Issues = "https://github.com/firefly-oss/flybrowsers/issues"
+Changelog = "https://github.com/firefly-oss/flybrowsers/blob/main/CHANGELOG.md"
+
+[project.scripts]
+# Main unified CLI (recommended)
+flybrowser = "flybrowser.cli.main:main"
+
+# Legacy CLI commands (still supported)
+flybrowser-setup = "flybrowser.cli.setup:main"
+flybrowser-serve = "flybrowser.cli.serve:main"
+flybrowser-cluster = "flybrowser.cli.cluster:main"
+flybrowser-admin = "flybrowser.cli.admin:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+    "types-pillow>=10.0.0",
+    "prompt_toolkit>=3.0.0",
+]
+
+# For enhanced REPL experience (optional)
+repl = [
+    "prompt_toolkit>=3.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311', 'py312']
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
