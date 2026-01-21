@@ -189,31 +189,19 @@ class ExtractionAgent(BaseAgent):
             html_snippet = context["html"][:8000] + "..." if len(context["html"]) > 8000 else context["html"]
             prompt += f"\n\nHTML Content:\n{html_snippet}"
 
-            # Generate default schema if none provided
+            # Use standardized default schema if none provided
+            # This provides consistent structure for any extraction query
             if not schema:
                 schema = {
                     "type": "object",
                     "properties": {
-                        "data": {
-                            "type": "object",
-                            "description": "The extracted data in structured format. Extract actual visible content from the page, not HTML attributes or technical metadata."
-                        },
-                        "metadata": {
-                            "type": "object",
-                            "description": "Metadata about the extraction (will be auto-populated)",
-                            "properties": {
-                                "source_url": {
-                                    "type": "string",
-                                    "description": f"The source page URL: {context['url']}"
-                                },
-                                "extraction_query": {
-                                    "type": "string",
-                                    "description": f"The extraction query: {safe_query}"
-                                },
-                            }
+                        "extracted_data": {
+                            "type": ["object", "array"],
+                            "description": "The extracted information - use object for single items, array for lists"
                         }
                     },
-                    "required": ["data"]
+                    "required": ["extracted_data"],
+                    "additionalProperties": False
                 }
 
             # Use vision-based extraction if enabled

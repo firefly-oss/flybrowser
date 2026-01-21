@@ -200,50 +200,131 @@ class ResponseValidator:
                 continue
                 
         return None
-        
-    def _validate_schema(self, data: Dict[str, Any], schema: Dict[str, Any]) -> bool:
+    
+    def _validate_schema(self, data: Any, schema: Dict[str, Any], path: str = "root") -> bool:
         """
-        Validate data against a simple JSON schema.
+        Validate data against JSON schema with recursive validation.
         
-        This is a basic validator that checks:
-        - Required properties exist
-        - Property types match
+        Enhanced validator that handles:
+        - Required properties
+        - Type checking with proper type coercion
+        - Nested objects (recursive)
+        - Arrays with item schemas
+        - Min/max properties
+        - Additional properties
         
         Args:
             data: Data to validate
             schema: JSON schema to validate against
+            path: Current path in data (for error messages)
             
         Returns:
             True if valid, False otherwise
         """
-        # Check required properties
-        required = schema.get("required", [])
-        for prop in required:
-            if prop not in data:
-                logger.debug(f"Missing required property: {prop}")
+        # Handle type validation
+        expected_type = schema.get("type")
+        if expected_type:
+            # Handle multiple allowed types (e.g., ["object", "array"])
+            if isinstance(expected_type, list):
+                type_valid = any(self._check_type(data, t, path, silent=True) for t in expected_type)
+                if not type_valid:
+                    logger.debug(f"{path}: Expected one of types {expected_type}, got {type(data).__name__}")
+                    return False
+            else:
+                if not self._check_type(data, expected_type, path):
+                    return False
+        
+        # For objects, validate properties
+        if isinstance(data, dict):
+            # Check required properties
+            required = schema.get("required", [])
+            for prop in required:
+                if prop not in data:
+                    logger.debug(f"{path}: Missing required property '{prop}'")
+                    return False
+            
+            # Check min/max properties
+            if "minProperties" in schema:
+                if len(data) < schema["minProperties"]:
+                    logger.debug(f"{path}: Too few properties (need at least {schema['minProperties']})")
+                    return False
+            
+            if "maxProperties" in schema:
+                if len(data) > schema["maxProperties"]:
+                    logger.debug(f"{path}: Too many properties (max {schema['maxProperties']})")
+                    return False
+            
+            # Validate each property
+            properties = schema.get("properties", {})
+            additional_allowed = schema.get("additionalProperties", True)
+            
+            for prop, value in data.items():
+                prop_path = f"{path}.{prop}"
+                
+                if prop in properties:
+                    # Validate against property schema (recursive)
+                    if not self._validate_schema(value, properties[prop], prop_path):
+                        return False
+                elif not additional_allowed:
+                    logger.debug(f"{prop_path}: Additional property not allowed")
+                    return False
+        
+        # For arrays, validate items
+        elif isinstance(data, list):
+            items_schema = schema.get("items")
+            if items_schema:
+                for i, item in enumerate(data):
+                    item_path = f"{path}[{i}]"
+                    if not self._validate_schema(item, items_schema, item_path):
+                        return False
+            
+            # Check min/max items
+            if "minItems" in schema and len(data) < schema["minItems"]:
+                logger.debug(f"{path}: Too few items (need at least {schema['minItems']})")
                 return False
-                
-        # Check property types
-        properties = schema.get("properties", {})
-        for prop, prop_schema in properties.items():
-            if prop in data:
-                expected_type = prop_schema.get("type")
-                value = data[prop]
-                
-                if expected_type == "string" and not isinstance(value, str):
-                    logger.debug(f"Property {prop} should be string, got {type(value)}")
-                    return False
-                elif expected_type == "number" and not isinstance(value, (int, float)):
-                    logger.debug(f"Property {prop} should be number, got {type(value)}")
-                    return False
-                elif expected_type == "array" and not isinstance(value, list):
-                    logger.debug(f"Property {prop} should be array, got {type(value)}")
-                    return False
-                elif expected_type == "object" and not isinstance(value, dict):
-                    logger.debug(f"Property {prop} should be object, got {type(value)}")
-                    return False
-                    
+            
+            if "maxItems" in schema and len(data) > schema["maxItems"]:
+                logger.debug(f"{path}: Too many items (max {schema['maxItems']})")
+                return False
+        
         return True
+    
+    def _check_type(self, value: Any, expected_type: str, path: str, silent: bool = False) -> bool:
+        """
+        Check if value matches expected type.
+        
+        Args:
+            value: Value to check
+            expected_type: Expected type name
+            path: Path for error messages
+            silent: If True, don't log errors (for trying multiple types)
+            
+        Returns:
+            True if type matches
+        """
+        type_checks = {
+            "string": lambda v: isinstance(v, str),
+            "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+            "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+            "boolean": lambda v: isinstance(v, bool),
+            "array": lambda v: isinstance(v, list),
+            "object": lambda v: isinstance(v, dict),
+            "null": lambda v: v is None,
+        }
+        
+        check = type_checks.get(expected_type)
+        if not check:
+            logger.warning(f"Unknown type '{expected_type}' in schema")
+            return True  # Be permissive for unknown types
+        
+        if not check(value):
+            if not silent:
+                actual_type = type(value).__name__
+                logger.debug(f"{path}: Expected type '{expected_type}', got '{actual_type}'")
+            return False
+        
+        return True
+        
         
     async def _ask_llm_to_fix(
         self,

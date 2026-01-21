@@ -107,28 +107,75 @@ Respond with ONLY this JSON structure:
 Start your response with { and end with } - nothing else.
 """
 
-EXTRACTION_SYSTEM = """You are a data extraction specialist. Your task is to extract specific information from web pages.
+EXTRACTION_SYSTEM = """You are a data extraction specialist. Extract specific information from web pages as JSON.
 
 You will be provided with:
 1. A screenshot of the web page (optional)
 2. The page's HTML content
 3. The current page URL and title
-4. A description of what data to extract
+4. A query describing what data to extract
 
-GUIDELINES:
-- Extract actual visible content from the page (text, headings, links, data)
-- DO NOT extract HTML attributes, element IDs, CSS classes, or technical metadata
-- DO NOT extract URL parameters, query strings, or technical page data
-- Focus on human-readable information that answers the query
-- Structure data clearly in the "data" field
-- Metadata fields (source_url, extraction_query) will be auto-populated - leave them empty or use placeholder values
+EXTRACTION RULES:
+✓ Extract ACTUAL CONTENT from the page (visible text, numbers, headings)
+✓ Return REAL VALUES you see on the page
+✓ Structure as clear, simple JSON
+✗ DO NOT return schema definitions or descriptions
+✗ DO NOT return HTML attributes, IDs, classes
+✗ DO NOT return URL parameters or technical metadata
+✗ DO NOT explain or add commentary
 
-CRITICAL: You MUST respond with ONLY valid JSON. Do NOT include:
-- Explanations outside the JSON object
-- Markdown code blocks (```json)
-- Any text before or after the JSON
+OUTPUT FORMAT:
+ALWAYS use this structure:
+{
+  "extracted_data": <your extracted data here>
+}
 
-Your response must start with { and end with } - nothing else.
+- For SINGLE items, use an object
+- For MULTIPLE items, use an array
+- Put ACTUAL VALUES from the page, not descriptions
+
+GOOD EXAMPLES:
+Query: "Get product name and price"
+{
+  "extracted_data": {
+    "product_name": "Blue Widget",
+    "price": 29.99
+  }
+}
+
+Query: "Extract article title and author"
+{
+  "extracted_data": {
+    "title": "How to Use Web Scraping",
+    "author": "Jane Smith"
+  }
+}
+
+Query: "Get top 5 items with scores"
+{
+  "extracted_data": [
+    {"title": "First Item", "score": 142},
+    {"title": "Second Item", "score": 98},
+    {"title": "Third Item", "score": 87},
+    {"title": "Fourth Item", "score": 65},
+    {"title": "Fifth Item", "score": 54}
+  ]
+}
+
+BAD EXAMPLES (DO NOT DO THIS):
+{
+  "type": "object",
+  "properties": {...}
+}
+
+{
+  "extracted_data": {
+    "description": "The extracted data"
+  }
+}
+
+CRITICAL: Return ONLY valid JSON with actual extracted values. No markdown, no explanations, no schema definitions.
+Start with { and end with } - nothing else.
 """
 
 ACTION_PLANNING_SYSTEM = """You are a web automation planner. Your task is to break down high-level instructions into specific browser actions.
@@ -197,16 +244,19 @@ HTML snippet:
 {html_snippet}
 """
 
-EXTRACTION_PROMPT = """Extract the following information from the page: {query}
+EXTRACTION_PROMPT = """Extract from this page: {query}
 
-Current page URL: {url}
+Page URL: {url}
 Page title: {title}
 
-IMPORTANT:
-- Extract the actual visible content/text from the page, not HTML attributes or technical data
-- Focus on human-readable information that answers the query
-- Structure the extracted data in the "data" field
-- Include metadata with the actual page URL: {url} and query: {query}
+INSTRUCTIONS:
+1. Find the requested information in the HTML content below
+2. Extract the ACTUAL VALUES you see (text, numbers, etc.)
+3. Return as simple, direct JSON properties
+4. For multiple items, use an array
+5. DO NOT return schema structure - return the actual data!
+
+Return ONLY the JSON object with extracted values. No explanations.
 """
 
 ACTION_PLANNING_PROMPT = """Plan the steps to accomplish this task: {instruction}
