@@ -30,10 +30,26 @@ CLI Entry Points:
     flybrowser-admin     Administrative tasks
 """
 
-from flybrowser.cli.setup import setup_wizard, generate_config
+from typing import TYPE_CHECKING
+
+# Use lazy imports to avoid RuntimeWarning when running modules directly
+# (e.g., python -m flybrowser.cli.setup)
+if TYPE_CHECKING:
+    from flybrowser.cli.setup import setup_wizard, generate_config
 
 __all__ = [
     "setup_wizard",
     "generate_config",
 ]
+
+
+def __getattr__(name: str):
+    """Lazy import attributes to avoid import cycles and RuntimeWarnings."""
+    if name == "setup_wizard":
+        from flybrowser.cli.setup import setup_wizard
+        return setup_wizard
+    elif name == "generate_config":
+        from flybrowser.cli.setup import generate_config
+        return generate_config
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
