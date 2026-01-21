@@ -453,6 +453,132 @@ def setup_wizard() -> Dict[str, Any]:
     return config
 
 
+def select_browsers_interactive() -> List[str]:
+    """Interactive browser selection.
+    
+    Returns:
+        List of selected browsers
+    """
+    print("\n" + "=" * 60)
+    print("BROWSER SELECTION")
+    print("=" * 60)
+    print("\nSelect which Playwright browsers to install:")
+    print("  Chromium: Google Chrome-based browser (recommended)")
+    print("  Firefox: Mozilla Firefox browser")
+    print("  WebKit: Safari-based browser\n")
+    
+    browsers = []
+    
+    if prompt_bool("Install Chromium?", default=True):
+        browsers.append("chromium")
+    
+    if prompt_bool("Install Firefox?", default=False):
+        browsers.append("firefox")
+    
+    if prompt_bool("Install WebKit?", default=False):
+        browsers.append("webkit")
+    
+    if not browsers:
+        print("\n[WARN] No browsers selected. Defaulting to Chromium.")
+        browsers = ["chromium"]
+    
+    print(f"\n[INFO] Will install: {', '.join(browsers)}")
+    return browsers
+
+
+def install_optional_extras() -> List[str]:
+    """Interactive selection of optional dependencies.
+    
+    Returns:
+        List of extras to install
+    """
+    print("\n" + "=" * 60)
+    print("OPTIONAL DEPENDENCIES")
+    print("=" * 60)
+    print("\nFlyBrowser has optional features you can install:")
+    print("  jupyter: Support for Jupyter notebooks (nest_asyncio, ipython)")
+    print("  repl: Enhanced interactive REPL experience")
+    print("  dev: Development tools (pytest, black, ruff, mypy)\n")
+    
+    extras = []
+    
+    if prompt_bool("Install Jupyter notebook support?", default=False):
+        extras.append("jupyter")
+    
+    if prompt_bool("Install enhanced REPL?", default=False):
+        extras.append("repl")
+    
+    if prompt_bool("Install development tools?", default=False):
+        extras.append("dev")
+    
+    if extras:
+        print(f"\n[INFO] Will install extras: {', '.join(extras)}")
+    else:
+        print("\n[INFO] No optional extras selected.")
+    
+    return extras
+
+
+def install_extras_pip(extras: List[str]) -> bool:
+    """Install optional dependencies using pip.
+    
+    Args:
+        extras: List of extras to install (e.g., ['jupyter', 'repl'])
+    
+    Returns:
+        True if installation succeeded, False otherwise
+    """
+    if not extras:
+        return True
+    
+    print(f"\n[INSTALL] Installing optional dependencies: {', '.join(extras)}")
+    
+    try:
+        # Determine package manager
+        try:
+            import uv
+            use_uv = True
+        except ImportError:
+            use_uv = False
+        
+        # Build install command
+        extras_str = ",".join(extras)
+        package_spec = f"flybrowser[{extras_str}]"
+        
+        if use_uv:
+            cmd = [sys.executable, "-m", "uv", "pip", "install", "-e", f".[{extras_str}]"]
+        else:
+            cmd = [sys.executable, "-m", "pip", "install", "-e", f".[{extras_str}]"]
+        
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        
+        try:
+            stdout, stderr = process.communicate()
+            if process.returncode != 0:
+                print(f"[FAIL] Failed to install extras: {stderr}")
+                return False
+            print(f"[OK] Optional dependencies installed")
+            return True
+        except KeyboardInterrupt:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            raise
+    except KeyboardInterrupt:
+        print("\n[INTERRUPTED] Extra installation cancelled.")
+        raise
+    except Exception as e:
+        print(f"[FAIL] Extra installation failed: {e}")
+        return False
+
+
 def install_browsers(browsers: Optional[List[str]] = None) -> bool:
     """Install Playwright browsers.
 
@@ -588,9 +714,21 @@ def cmd_install(args: argparse.Namespace) -> int:
         print_banner()
         print("\n[INSTALL] Installing FlyBrowser...\n")
 
-        # Install browsers unless skipped
+        # Prompt for optional extras if interactive mode and not specified
+        if args.interactive and not args.no_wizard:
+            extras = install_optional_extras()
+            if extras and not install_extras_pip(extras):
+                print("\n[WARN] Optional dependencies had issues, but continuing...")
+
+        # Select and install browsers unless skipped
         if not args.no_browsers:
-            browsers = args.browsers.split(",") if args.browsers else ["chromium"]
+            if args.interactive and not args.no_wizard:
+                # Interactive browser selection
+                browsers = select_browsers_interactive()
+            else:
+                # Use command line argument or default
+                browsers = args.browsers.split(",") if args.browsers else ["chromium"]
+            
             if not install_browsers(browsers):
                 print("\n[WARN] Browser installation had issues, but continuing...")
 
@@ -671,6 +809,207 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0 if verify_installation() else 1
 
 
+def setup_jupyter_kernel() -> bool:
+    """Install Jupyter kernel for FlyBrowser.
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    print("[INFO] Setting up Jupyter kernel...")
+    
+    # Check if we're in a venv
+    venv_python = Path(sys.executable)
+    if not (venv_python.parent.parent / "pyvenv.cfg").exists():
+        # Check alternative venv location
+        if not (venv_python.parent.parent / "bin" / "activate").exists():
+            print("[WARN] Not running in a virtual environment")
+            print("[INFO] Jupyter kernel setup works best with venv installation")
+    
+    # Check if jupyter and ipykernel are installed
+    try:
+        import jupyter  # noqa: F401
+        import ipykernel  # noqa: F401
+    except ImportError:
+        print("[INFO] Jupyter and ipykernel not found, installing...")
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "--quiet",
+                 "jupyter", "ipykernel", "nest_asyncio"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            print("[OK] Installed jupyter, ipykernel, and nest_asyncio")
+        except subprocess.CalledProcessError:
+            print("[FAIL] Failed to install Jupyter packages")
+            return False
+    
+    # Register the kernel
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "ipykernel", "install",
+             "--user", "--name=flybrowser", "--display-name=FlyBrowser"],
+            capture_output=True,
+            text=True,
+        )
+        
+        if result.returncode == 0:
+            print("[OK] Jupyter kernel installed successfully")
+            print("")
+            print("To use in Jupyter:")
+            print("  1. Start Jupyter: jupyter notebook")
+            print("  2. Select kernel: Kernel → Change Kernel → FlyBrowser")
+            print("  3. Import: from flybrowser import FlyBrowser")
+            print("")
+            return True
+        else:
+            print(f"[FAIL] Failed to register kernel: {result.stderr}")
+            return False
+    except Exception as e:
+        print(f"[FAIL] Error registering kernel: {e}")
+        return False
+
+
+def uninstall_jupyter_kernel() -> bool:
+    """Remove Jupyter kernel for FlyBrowser.
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    print("[INFO] Removing Jupyter kernel...")
+    
+    # Check if kernel exists
+    try:
+        result = subprocess.run(
+            ["jupyter", "kernelspec", "list"],
+            capture_output=True,
+            text=True,
+        )
+        
+        if "flybrowser" not in result.stdout:
+            print("[INFO] FlyBrowser kernel not found")
+            return True
+    except FileNotFoundError:
+        print("[WARN] jupyter command not found")
+        return False
+    
+    # Remove the kernel
+    try:
+        subprocess.check_call(
+            ["jupyter", "kernelspec", "uninstall", "flybrowser", "-y"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print("[OK] Jupyter kernel removed")
+        return True
+    except subprocess.CalledProcessError:
+        print("[FAIL] Failed to remove kernel")
+        return False
+
+
+def check_jupyter_status() -> bool:
+    """Check Jupyter kernel installation status.
+    
+    Returns:
+        True if kernel is installed, False otherwise
+    """
+    print("[INFO] Checking Jupyter kernel status...")
+    print("")
+    
+    # Check if jupyter is available
+    jupyter_available = shutil.which("jupyter") is not None
+    print(f"  Jupyter command: {'✓ Available' if jupyter_available else '✗ Not found'}")
+    
+    if not jupyter_available:
+        print("")
+        print("[INFO] Jupyter not installed")
+        print("[TIP] Install with: pip install jupyter ipykernel")
+        return False
+    
+    # Check if kernel is registered
+    try:
+        result = subprocess.run(
+            ["jupyter", "kernelspec", "list"],
+            capture_output=True,
+            text=True,
+        )
+        
+        kernel_installed = "flybrowser" in result.stdout
+        print(f"  FlyBrowser kernel: {'✓ Installed' if kernel_installed else '✗ Not installed'}")
+        
+        if kernel_installed:
+            # Extract kernel path from output
+            for line in result.stdout.split("\n"):
+                if "flybrowser" in line:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        print(f"  Kernel location: {parts[1]}")
+            print("")
+            print("[OK] Jupyter kernel is properly configured")
+            print("")
+            print("Usage:")
+            print("  1. Start Jupyter: jupyter notebook")
+            print("  2. Select FlyBrowser kernel in notebook")
+            return True
+        else:
+            print("")
+            print("[INFO] Kernel not installed")
+            print("[TIP] Install with: flybrowser setup jupyter install")
+            return False
+    except Exception as e:
+        print(f"  Error: {e}")
+        return False
+
+
+def fix_jupyter_kernel() -> bool:
+    """Fix/reinstall Jupyter kernel.
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    print("[INFO] Fixing Jupyter kernel installation...")
+    
+    # Uninstall existing kernel (ignore errors)
+    print("[INFO] Removing existing kernel...")
+    try:
+        subprocess.run(
+            ["jupyter", "kernelspec", "uninstall", "flybrowser", "-y"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except:
+        pass
+    
+    # Reinstall
+    print("[INFO] Reinstalling kernel...")
+    return setup_jupyter_kernel()
+
+
+def cmd_jupyter(args: argparse.Namespace) -> int:
+    """Handle the jupyter command.
+
+    Args:
+        args: Parsed command line arguments
+
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+    try:
+        if args.jupyter_action == "install":
+            return 0 if setup_jupyter_kernel() else 1
+        elif args.jupyter_action == "uninstall":
+            return 0 if uninstall_jupyter_kernel() else 1
+        elif args.jupyter_action == "status":
+            return 0 if check_jupyter_status() else 1
+        elif args.jupyter_action == "fix":
+            return 0 if fix_jupyter_kernel() else 1
+        else:
+            print(f"Unknown action: {args.jupyter_action}")
+            return 1
+    except KeyboardInterrupt:
+        print("\n\n[INTERRUPTED] Jupyter operation cancelled by user.")
+        return 130
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser.
 
@@ -703,6 +1042,17 @@ def create_parser() -> argparse.ArgumentParser:
         "--configure",
         action="store_true",
         help="Run configuration wizard after installation",
+    )
+    install_parser.add_argument(
+        "--interactive",
+        action="store_true",
+        default=True,
+        help="Run interactive prompts for options (default: True)",
+    )
+    install_parser.add_argument(
+        "--no-wizard",
+        action="store_true",
+        help="Skip interactive prompts and use defaults",
     )
     install_parser.set_defaults(func=cmd_install)
 
@@ -737,6 +1087,18 @@ def create_parser() -> argparse.ArgumentParser:
         help="Verify FlyBrowser installation",
     )
     verify_parser.set_defaults(func=cmd_verify)
+
+    # Jupyter command
+    jupyter_parser = subparsers.add_parser(
+        "jupyter",
+        help="Manage Jupyter kernel integration",
+    )
+    jupyter_parser.add_argument(
+        "jupyter_action",
+        choices=["install", "uninstall", "status", "fix"],
+        help="Jupyter action to perform",
+    )
+    jupyter_parser.set_defaults(func=cmd_jupyter)
 
     return parser
 
