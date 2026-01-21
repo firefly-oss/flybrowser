@@ -281,8 +281,8 @@ class TestWorkflowAgentExecute:
         assert result["total_steps"] == 1
 
     @pytest.mark.asyncio
-    async def test_execute_raises_workflow_error(self):
-        """Test execute raises WorkflowError on failure."""
+    async def test_execute_returns_error_dict_on_failure(self):
+        """Test execute returns error dict on failure instead of raising."""
         mock_page = MagicMock()
         mock_page.get_url = AsyncMock(side_effect=Exception("Error"))
         
@@ -291,8 +291,15 @@ class TestWorkflowAgentExecute:
         
         agent = WorkflowAgent(mock_page, mock_detector, mock_llm)
         
-        with pytest.raises(WorkflowError, match="Failed to execute workflow"):
-            await agent.execute("Do something")
+        result = await agent.execute("Do something")
+        
+        # Should return error dict instead of raising
+        assert result["success"] is False
+        assert "error" in result
+        assert "Error" in result["error"]
+        assert result["steps_completed"] == 0
+        assert result["total_steps"] == 0
+        assert result["exception_type"] == "Exception"
 
 
 class TestWorkflowAgentSubstituteVariables:

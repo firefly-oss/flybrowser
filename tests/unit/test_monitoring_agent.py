@@ -371,8 +371,8 @@ class TestMonitoringAgentExecute:
     """Tests for MonitoringAgent.execute()."""
 
     @pytest.mark.asyncio
-    async def test_execute_raises_on_error(self):
-        """Test execute raises MonitoringError on failure."""
+    async def test_execute_returns_error_dict_on_failure(self):
+        """Test execute returns error dict on failure instead of raising."""
         mock_page = MagicMock()
         mock_page.get_url = AsyncMock(side_effect=Exception("Page error"))
         
@@ -381,5 +381,12 @@ class TestMonitoringAgentExecute:
         
         agent = MonitoringAgent(mock_page, mock_detector, mock_llm)
         
-        with pytest.raises(MonitoringError, match="Failed to execute monitoring"):
-            await agent.execute("Monitor changes", max_duration=0.1)
+        result = await agent.execute("Monitor changes", max_duration=0.1)
+        
+        # Should return error dict instead of raising
+        assert result["success"] is False
+        assert "error" in result
+        assert "Page error" in result["error"]
+        assert result["session_id"] is None
+        assert result["changes_detected"] == []
+        assert result["exception_type"] == "Exception"

@@ -359,8 +359,8 @@ class TestNavigationAgentExecute:
         assert result["navigation_type"] == "url"
 
     @pytest.mark.asyncio
-    async def test_execute_raises_navigation_error(self):
-        """Test execute raises NavigationError on failure."""
+    async def test_execute_returns_error_dict_on_failure(self):
+        """Test execute returns error dict on failure instead of raising."""
         mock_page = MagicMock()
         mock_page.get_url = AsyncMock(side_effect=Exception("Page error"))
         
@@ -369,5 +369,11 @@ class TestNavigationAgentExecute:
         
         agent = NavigationAgent(mock_page, mock_detector, mock_llm)
         
-        with pytest.raises(NavigationError, match="Failed to execute navigation"):
-            await agent.execute("Go somewhere")
+        result = await agent.execute("Go somewhere")
+        
+        # Should return error dict instead of raising
+        assert result["success"] is False
+        assert "error" in result
+        assert "Page error" in result["error"]
+        assert result["navigation_type"] == "unknown"
+        assert result["exception_type"] == "Exception"

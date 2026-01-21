@@ -64,8 +64,11 @@ class TestExtractionAgentExecute:
         
         result = await agent.execute("Extract the title", use_vision=False)
         
-        assert "title" in result
-        assert result["title"] == "Example"
+        # ExtractionAgent now returns {success, data, query}
+        assert result["success"] is True
+        assert "data" in result
+        assert "title" in result["data"]
+        assert result["data"]["title"] == "Example"
 
     @pytest.mark.asyncio
     async def test_execute_vision_extraction(self):
@@ -87,7 +90,9 @@ class TestExtractionAgentExecute:
         
         result = await agent.execute("What colors are on the page?", use_vision=True)
         
-        assert "colors" in result
+        # ExtractionAgent now returns {success, data, query}
+        assert result["success"] is True
+        assert "colors" in result["data"]
         mock_page.screenshot.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -125,9 +130,12 @@ class TestExtractionAgentExecute:
         
         result = await agent.execute("Extract all products", schema=schema)
         
-        assert "products" in result
-        assert len(result["products"]) == 1
-        assert result["products"][0]["name"] == "Item1"
+        # ExtractionAgent now returns {success, data, query}
+        assert result["success"] is True
+        assert "data" in result
+        assert "products" in result["data"]
+        assert len(result["data"]["products"]) == 1
+        assert result["data"]["products"][0]["name"] == "Item1"
 
     @pytest.mark.asyncio
     async def test_execute_returns_text_on_invalid_json(self):
@@ -148,12 +156,14 @@ class TestExtractionAgentExecute:
         
         result = await agent.execute("What is the title?", use_vision=False)
         
-        assert "extracted_text" in result
-        assert "Example Domain" in result["extracted_text"]
+        # ExtractionAgent now returns {success, data, query}
+        assert result["success"] is True
+        assert "extracted_text" in result["data"]
+        assert "Example Domain" in result["data"]["extracted_text"]
 
     @pytest.mark.asyncio
-    async def test_execute_raises_extraction_error(self):
-        """Test execute raises ExtractionError on failure."""
+    async def test_execute_returns_error_dict_on_failure(self):
+        """Test execute returns error dict on failure instead of raising."""
         mock_page = MagicMock()
         mock_page.get_url = AsyncMock(side_effect=Exception("Page error"))
         
@@ -162,8 +172,14 @@ class TestExtractionAgentExecute:
         
         agent = ExtractionAgent(mock_page, mock_detector, mock_llm)
         
-        with pytest.raises(ExtractionError, match="Failed to extract data"):
-            await agent.execute("Extract data")
+        result = await agent.execute("Extract data")
+        
+        # Should return error dict instead of raising
+        assert result["success"] is False
+        assert "error" in result
+        assert "Page error" in result["error"]
+        assert result["query"] == "Extract data"
+        assert result["exception_type"] == "Exception"
 
     @pytest.mark.asyncio
     async def test_execute_truncates_long_html(self):
@@ -187,7 +203,8 @@ class TestExtractionAgentExecute:
         result = await agent.execute("Extract something", use_vision=False)
         
         # Should still work despite long HTML
-        assert result == {"result": "ok"}
+        assert result["success"] is True
+        assert result["data"] == {"result": "ok"}
         mock_llm.generate.assert_awaited_once()
 
 
