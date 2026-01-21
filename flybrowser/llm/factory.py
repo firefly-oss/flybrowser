@@ -120,14 +120,47 @@ class LLMProviderFactory:
         cls._providers[name.lower()] = provider_class
 
     @classmethod
-    def list_providers(cls) -> list[str]:
+    def list_providers(cls, include_aliases: bool = True) -> list[str]:
         """
         List all registered providers.
+
+        Args:
+            include_aliases: Whether to include aliases in the list
 
         Returns:
             List of provider names
         """
-        return list(cls._providers.keys())
+        if include_aliases:
+            return list(cls._providers.keys())
+        
+        # Return only unique providers (skip aliases)
+        seen_classes = set()
+        providers = []
+        for name, provider_class in cls._providers.items():
+            if provider_class not in seen_classes:
+                seen_classes.add(provider_class)
+                providers.append(name)
+        return providers
+
+    @classmethod
+    def get_aliases(cls) -> Dict[str, str]:
+        """
+        Get a mapping of aliases to their canonical provider names.
+
+        Returns:
+            Dictionary mapping alias names to canonical provider names
+        """
+        seen_classes = {}
+        aliases = {}
+        
+        for name, provider_class in cls._providers.items():
+            if provider_class in seen_classes:
+                # This is an alias
+                aliases[name] = seen_classes[provider_class]
+            else:
+                seen_classes[provider_class] = name
+        
+        return aliases
 
     @classmethod
     def get_all_provider_statuses(cls) -> Dict[str, ProviderStatus]:

@@ -187,9 +187,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         else:
             cli_output.print_status_line("FAIL", f"{status.name}: {status.message}", ok=False)
     
-    # Show all registered providers
-    all_providers = LLMProviderFactory.list_providers()
-    print(f"\n  Registered providers: {', '.join(all_providers)}")
+    # Show all registered providers and aliases
+    providers = LLMProviderFactory.list_providers(include_aliases=False)
+    aliases = LLMProviderFactory.get_aliases()
+    
+    print(f"\n  Providers: {', '.join(providers)}")
+    if aliases:
+        alias_strs = [f"{alias} → {target}" for alias, target in aliases.items()]
+        print(f"  Aliases: {', '.join(alias_strs)}")
     
     # Check 6: Config files
     cli_output.print_section("Configuration")
