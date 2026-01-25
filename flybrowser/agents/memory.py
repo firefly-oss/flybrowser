@@ -999,11 +999,41 @@ class AgentMemory:
 
         # 2. CRITICAL: Extraction data from working memory scratch pad
         # This is the most important data for text-only mode to avoid hallucination
+        # BUT we must limit it to avoid token overflow (max 25% of budget for extractions)
+        max_extraction_budget = remaining_budget // 4  # 25% of remaining budget
+        max_extraction_chars = max_extraction_budget * 4  # ~4 chars per token
+        max_single_extraction_chars = min(max_extraction_chars // 2, 32000)  # Max 32K chars per extraction
+        
         extraction_lines = []
+        total_extraction_chars = 0
         for key, value in self.working._scratch_pad.items():
             if key.startswith("extracted_"):
+                value_str = str(value)
+                # Truncate large extraction values to prevent token overflow
+                if len(value_str) > max_single_extraction_chars:
+                    # Smart truncation: keep beginning and end for context
+                    head_size = max_single_extraction_chars * 2 // 3
+                    tail_size = max_single_extraction_chars // 3 - 100
+                    value_str = (
+                        value_str[:head_size] + 
+                        f"\n\n... [TRUNCATED: {len(value_str) - max_single_extraction_chars:,} chars omitted] ...\n\n" +
+                        value_str[-tail_size:]
+                    )
+                
+                # Check if we'd exceed total extraction budget
+                entry_chars = len(f"### {key}\n") + len(value_str)
+                if total_extraction_chars + entry_chars > max_extraction_chars:
+                    # Truncate this entry to fit remaining budget
+                    remaining_chars = max_extraction_chars - total_extraction_chars - len(f"### {key}\n") - 50
+                    if remaining_chars > 500:  # Only add if meaningful content fits
+                        value_str = value_str[:remaining_chars] + "\n... [truncated to fit context]"
+                        extraction_lines.append(f"### {key}")
+                        extraction_lines.append(value_str)
+                    break  # No more room for extractions
+                
                 extraction_lines.append(f"### {key}")
-                extraction_lines.append(str(value))
+                extraction_lines.append(value_str)
+                total_extraction_chars += entry_chars
         
         if extraction_lines:
             extraction_content = "## Extracted Data (from previous tool calls - USE THIS DATA!)\n" + "\n".join(extraction_lines)
