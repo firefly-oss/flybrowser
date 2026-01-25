@@ -66,7 +66,7 @@ tasks:
           {{.PIP}} install -e .
         fi
       - "{{.PYTHON}} -m playwright install chromium"
-      - echo "✓ FlyBrowser installed successfully"
+      - echo "[ok] FlyBrowser installed successfully"
       - echo ""
       - echo "Next steps:"
       - echo "  task setup     # Run configuration wizard"
@@ -84,7 +84,7 @@ tasks:
           {{.PIP}} install -e ".[dev,repl]"
         fi
       - "{{.PYTHON}} -m playwright install chromium firefox webkit"
-      - echo "✓ Development environment ready"
+      - echo "[ok] Development environment ready"
 
   install:prod:
     desc: "📦 Install for production (minimal dependencies)"
@@ -92,7 +92,7 @@ tasks:
       - task: _check-python
       - "{{.PIP}} install ."
       - "{{.PYTHON}} -m playwright install chromium"
-      - echo "✓ Production installation complete"
+      - echo "[ok] Production installation complete"
 
   install:browsers:
     desc: "📦 Install Playwright browsers"
@@ -105,7 +105,7 @@ tasks:
     desc: "📦 Install uv (fast Python package installer)"
     cmds:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
-      - echo "✓ uv installed. Restart your shell or run: source ~/.cargo/env"
+      - echo "[ok] uv installed. Restart your shell or run: source ~/.cargo/env"
 
   setup:
     desc: "⚙️  Run interactive setup wizard"
@@ -113,12 +113,12 @@ tasks:
       - "{{.PYTHON}} -m flybrowser.cli.main setup configure"
 
   verify:
-    desc: "✓ Verify FlyBrowser installation"
+    desc: "[ok] Verify FlyBrowser installation"
     cmds:
       - "{{.PYTHON}} -m flybrowser.cli.main doctor"
 
   doctor:
-    desc: "🔍 Run installation diagnostics"
+    desc: " Run installation diagnostics"
     cmds:
       - "{{.PYTHON}} -m flybrowser.cli.main doctor"
 
@@ -135,14 +135,14 @@ tasks:
       - rm -rf build/ dist/ *.egg-info
       - rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov/ .coverage
       - find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-      - echo "✓ Cleaned build artifacts"
+      - echo "[ok] Cleaned build artifacts"
 
 # ============================================================================
 # DEVELOPMENT TASKS
 # ============================================================================
 
   dev:
-    desc: "🚀 Start development environment (server with reload)"
+    desc: " Start development environment (server with reload)"
     cmds:
       - task: serve
     env:
@@ -166,10 +166,10 @@ tasks:
     desc: "🎨 Format code with Black"
     cmds:
       - "{{.BLACK}} flybrowser/ examples/ tests/"
-      - echo "✓ Code formatted"
+      - echo "[ok] Code formatted"
 
   lint:
-    desc: "🔍 Lint code with Ruff"
+    desc: " Lint code with Ruff"
     cmds:
       - "{{.RUFF}} check flybrowser/ examples/ tests/"
 
@@ -177,7 +177,7 @@ tasks:
     desc: "🔧 Lint and auto-fix issues"
     cmds:
       - "{{.RUFF}} check --fix flybrowser/ examples/ tests/"
-      - echo "✓ Auto-fixed linting issues"
+      - echo "[ok] Auto-fixed linting issues"
 
   typecheck:
     desc: "📝 Run type checking with mypy"
@@ -185,13 +185,13 @@ tasks:
       - "{{.MYPY}} flybrowser/"
 
   check:
-    desc: "✅ Run all code quality checks"
+    desc: " Run all code quality checks"
     cmds:
       - task: format
       - task: lint
       - task: typecheck
       - echo ""
-      - echo "✓ All checks passed"
+      - echo "[ok] All checks passed"
 
   precommit:
     desc: "🔒 Run pre-commit checks (format, lint, typecheck, test:unit)"
@@ -201,7 +201,7 @@ tasks:
       - task: typecheck
       - task: test:unit
       - echo ""
-      - echo "✓ Ready to commit"
+      - echo "[ok] Ready to commit"
 
 # ============================================================================
 # TESTING TASKS
@@ -236,7 +236,7 @@ tasks:
     desc: "📊 Run tests with coverage report"
     cmds:
       - "{{.PYTEST}} tests/ --cov=flybrowser --cov-report=html --cov-report=term --cov-fail-under={{.COVERAGE_MIN}}"
-      - echo "✓ Coverage report generated in htmlcov/"
+      - echo "[ok] Coverage report generated in htmlcov/"
 
   test:watch:
     desc: "👀 Run tests in watch mode"
@@ -248,17 +248,17 @@ tasks:
 # ============================================================================
 
   serve:
-    desc: "🚀 Run FlyBrowser API service (development mode)"
+    desc: " Run FlyBrowser API service (development mode)"
     cmds:
       - "{{.PYTHON}} -m flybrowser.cli.main serve --host {{.SERVICE_HOST}} --port {{.SERVICE_PORT}} --reload"
 
   serve:prod:
-    desc: "🚀 Run service in production mode"
+    desc: " Run service in production mode"
     cmds:
       - "{{.PYTHON}} -m flybrowser.cli.main serve --host {{.SERVICE_HOST}} --port {{.SERVICE_PORT}} --workers 4"
 
   serve:cluster:
-    desc: "🚀 Run service in HA cluster mode"
+    desc: " Run service in HA cluster mode"
     cmds:
       - "{{.PYTHON}} -m flybrowser.cli.main serve --cluster --host {{.SERVICE_HOST}} --port {{.SERVICE_PORT}}"
 
@@ -289,7 +289,7 @@ tasks:
     desc: "🐳 Build Docker image"
     cmds:
       - docker build -t {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}} .
-      - echo "✓ Built {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}}"
+      - echo "[ok] Built {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}}"
 
   docker:run:
     desc: "🐳 Run FlyBrowser in Docker"
@@ -326,7 +326,7 @@ tasks:
     cmds:
       - task: clean
       - "{{.PYTHON}} -m build"
-      - echo "✓ Built distribution packages in dist/"
+      - echo "[ok] Built distribution packages in dist/"
 
   release:
     desc: "🏷️  Create a new release (requires VERSION argument)"
@@ -340,7 +340,7 @@ tasks:
       - task: check
       - task: test
       - task: build
-      - echo "✓ Ready to release version {{.VERSION}}"
+      - echo "[ok] Ready to release version {{.VERSION}}"
       - echo "  Run: git tag v{{.VERSION}} && git push --tags"
 
 # ============================================================================
@@ -363,17 +363,17 @@ tasks:
 # ============================================================================
 
   version:
-    desc: "📋 Show FlyBrowser version"
+    desc: " Show FlyBrowser version"
     cmds:
       - "{{.PYTHON}} -m flybrowser.cli.main version"
 
   version:json:
-    desc: "📋 Show version info as JSON"
+    desc: " Show version info as JSON"
     cmds:
       - "{{.PYTHON}} -m flybrowser.cli.main version --json"
 
   info:
-    desc: "📋 Show environment info"
+    desc: " Show environment info"
     cmds:
       - echo "FlyBrowser Development Environment"
       - echo "=================================="

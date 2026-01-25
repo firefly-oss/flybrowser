@@ -1,4 +1,6 @@
+# =============================================================================
 # Python
+# =============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,66 +22,164 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
 
+# =============================================================================
 # Virtual environments
+# =============================================================================
 venv/
 ENV/
 env/
-.venv
+.venv/
+.conda/
+conda-env/
 
-# IDEs
+# =============================================================================
+# IDEs and Editors
+# =============================================================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
+*.sublime-project
+*.sublime-workspace
+.spyderproject
+.spyproject
+.ropeproject
 
+# =============================================================================
 # Testing
+# =============================================================================
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 .tox/
+.nox/
 .hypothesis/
+coverage.xml
+*.cover
+*.py,cover
+nosetests.xml
+junit.xml
+test-results/
 
+# =============================================================================
 # Type checking
+# =============================================================================
 .mypy_cache/
 .dmypy.json
 dmypy.json
 .pyre/
 .pytype/
 
+# =============================================================================
 # Linting
+# =============================================================================
 .ruff_cache/
+.pylint.d/
 
+# =============================================================================
 # Logs
+# =============================================================================
 *.log
 logs/
+*.log.*
 
-# Environment variables
+# =============================================================================
+# Environment variables and secrets
+# =============================================================================
 .env
 .env.local
 .env.*.local
+.envrc
+*.pem
+*.key
+secrets/
+credentials/
 
-# Data
+# =============================================================================
+# Databases
+# =============================================================================
 data/
 *.db
 *.sqlite
+*.sqlite3
 
-# Playwright
+# =============================================================================
+# Playwright and Browser Automation
+# =============================================================================
 .playwright/
+playwright-report/
+test-results/
+allure-results/
 
+# =============================================================================
 # Documentation
+# =============================================================================
 docs/_build/
 site/
+.mkdocs/
 
-# OS
-Thumbs.db
+# =============================================================================
+# OS Files
+# =============================================================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
 
-# Project specific
+# =============================================================================
+# FlyBrowser Project Specific
+# =============================================================================
+# Session files
 *.session
-screenshots/
-temp/
+sessions/
 
+# Screenshots and recordings
+screenshots/
+recordings/
+video/
+*.mp4
+*.webm
+*.avi
+*.mkv
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+*.temp
+
+# Generated output
+output/
+results/
+reports/
+exports/
+
+# Downloaded files
+downloaded_invoices/
+
+# Monitoring data
+monitoring/
+
+# Jupyter notebooks
 .ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Cache
+.cache/
+*.cache
+
+# Docker
+*.pid
+
+# uv
+uv.lock
+uv/
