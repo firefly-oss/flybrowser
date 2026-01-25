@@ -96,7 +96,10 @@ class TestActionAgentInit:
     """Tests for ActionAgent initialization."""
 
     def test_init_default_values(self):
-        """Test default initialization values."""
+        """Test default initialization values from performance config."""
+        from flybrowser.core.performance import get_performance_config
+        perf = get_performance_config()
+        
         mock_page = MagicMock()
         mock_detector = MagicMock()
         mock_llm = MagicMock()
@@ -106,9 +109,9 @@ class TestActionAgentInit:
         assert agent.page is mock_page
         assert agent.detector is mock_detector
         assert agent.llm is mock_llm
-        assert agent.max_retries == 3
-        assert agent.retry_delay == 1.0
-        assert agent.action_timeout == 30000
+        assert agent.max_retries == perf.max_retries
+        assert agent.retry_delay == perf.retry_delay_seconds
+        assert agent.action_timeout == perf.action_timeout_ms
         assert agent.pii_handler is None
 
     def test_init_custom_values(self):
@@ -168,8 +171,8 @@ class TestActionAgentExecute:
         assert len(result["plan"]) == 1
 
     @pytest.mark.asyncio
-    async def test_execute_raises_on_error(self):
-        """Test execute raises ActionError on failure."""
+    async def test_execute_returns_error_on_failure(self):
+        """Test execute returns error dict on failure instead of raising."""
         mock_page = MagicMock()
         mock_page.get_url = AsyncMock(side_effect=Exception("Page error"))
         
@@ -178,8 +181,12 @@ class TestActionAgentExecute:
         
         agent = ActionAgent(mock_page, mock_detector, mock_llm)
         
-        with pytest.raises(ActionError, match="Failed to execute action"):
-            await agent.execute("Click the button")
+        # ActionAgent now returns error dict instead of raising
+        result = await agent.execute("Click the button")
+        
+        assert result["success"] is False
+        assert "error" in result
+        assert "Page error" in result["error"]
 
 
 class TestActionAgentFillForm:

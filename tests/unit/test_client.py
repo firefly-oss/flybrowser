@@ -341,6 +341,139 @@ class TestFlyBrowserClientNavigationAPI:
             assert "data_base64" in result
 
 
+class TestFlyBrowserClientAutonomousAPI:
+    """Tests for FlyBrowserClient autonomous mode API."""
+
+    @pytest.mark.asyncio
+    async def test_auto(self):
+        """Test auto() method."""
+        client = FlyBrowserClient("http://localhost:8000")
+        client._started = True
+        
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {
+                "success": True,
+                "goal": "Fill out the form",
+                "result_data": {"confirmation": "Form submitted"},
+                "sub_goals_completed": 3,
+                "total_sub_goals": 3,
+                "iterations": 12,
+                "duration_seconds": 45.2,
+            }
+            
+            result = await client.auto(
+                session_id="sess-123",
+                goal="Fill out the form",
+                context={"name": "John Doe", "email": "john@example.com"},
+                max_iterations=30,
+                max_time_seconds=300,
+            )
+            
+            assert result["success"] is True
+            assert result["goal"] == "Fill out the form"
+            assert result["result_data"]["confirmation"] == "Form submitted"
+            mock_request.assert_awaited_once()
+            
+            # Verify the request was made with correct parameters
+            call_args = mock_request.call_args
+            assert call_args[0][0] == "POST"
+            assert "/sessions/sess-123/auto" in call_args[0][1]
+
+    @pytest.mark.asyncio
+    async def test_auto_with_target_schema(self):
+        """Test auto() method with target_schema for scraping."""
+        client = FlyBrowserClient("http://localhost:8000")
+        client._started = True
+        
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {
+                "success": True,
+                "result_data": [{"name": "Product", "price": 29.99}],
+                "pages_scraped": 3,
+                "items_extracted": 15,
+            }
+            
+            result = await client.auto(
+                session_id="sess-123",
+                goal="Extract products",
+                target_schema={"type": "array", "items": {"type": "object"}},
+                max_pages=5,
+            )
+            
+            assert result["success"] is True
+            assert result["pages_scraped"] == 3
+
+    @pytest.mark.asyncio
+    async def test_scrape(self):
+        """Test scrape() method."""
+        client = FlyBrowserClient("http://localhost:8000")
+        client._started = True
+        
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {
+                "success": True,
+                "result_data": [
+                    {"name": "Widget", "price": 29.99},
+                    {"name": "Gadget", "price": 49.99},
+                ],
+                "pages_scraped": 5,
+                "items_extracted": 47,
+                "validation_results": [
+                    {"validator": "not_empty", "passed": True},
+                    {"validator": "min_items_10", "passed": True},
+                ],
+                "schema_compliance": 0.98,
+            }
+            
+            result = await client.scrape(
+                session_id="sess-123",
+                goal="Extract all products",
+                target_schema={
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "price": {"type": "number"},
+                        },
+                    },
+                },
+                validators=["not_empty", "min_items_10"],
+                max_pages=5,
+            )
+            
+            assert result["success"] is True
+            assert result["pages_scraped"] == 5
+            assert result["items_extracted"] == 47
+            assert result["schema_compliance"] == 0.98
+            assert len(result["validation_results"]) == 2
+            mock_request.assert_awaited_once()
+            
+            # Verify the request was made with correct parameters
+            call_args = mock_request.call_args
+            assert call_args[0][0] == "POST"
+            assert "/sessions/sess-123/scrape" in call_args[0][1]
+            assert "validators" in call_args[1]["json"]
+            assert call_args[1]["json"]["validators"] == ["not_empty", "min_items_10"]
+
+    @pytest.mark.asyncio
+    async def test_scrape_returns_empty_on_failure(self):
+        """Test scrape() returns empty dict on failure."""
+        client = FlyBrowserClient("http://localhost:8000")
+        client._started = True
+        
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = None
+            
+            result = await client.scrape(
+                session_id="sess-123",
+                goal="Extract products",
+                target_schema={"type": "array"},
+            )
+            
+            assert result == {}
+
+
 class TestFlyBrowserClientClusterAPI:
     """Tests for FlyBrowserClient cluster API."""
 

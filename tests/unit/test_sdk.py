@@ -200,7 +200,7 @@ class TestFlyBrowserExtract:
 
     @pytest.mark.asyncio
     async def test_extract_server_mode(self):
-        """Test extract in server mode."""
+        """Test extract in server mode returns AgentRequestResponse by default."""
         browser = FlyBrowser(endpoint="http://localhost:8000")
         browser._started = True
         browser._session_id = "test-session"
@@ -209,19 +209,73 @@ class TestFlyBrowserExtract:
         
         result = await browser.extract("Get the title")
         
+        # Default: return_metadata=True returns AgentRequestResponse
+        from flybrowser.agents.response import AgentRequestResponse
+        assert isinstance(result, AgentRequestResponse)
+        assert result.data == {"title": "Example"}
+
+    @pytest.mark.asyncio
+    async def test_extract_server_mode_raw(self):
+        """Test extract in server mode with return_metadata=False returns raw data."""
+        browser = FlyBrowser(endpoint="http://localhost:8000")
+        browser._started = True
+        browser._session_id = "test-session"
+        browser._client = AsyncMock()
+        browser._client.extract = AsyncMock(return_value={"data": {"title": "Example"}})
+        
+        result = await browser.extract("Get the title", return_metadata=False)
+        
         assert result == {"title": "Example"}
 
     @pytest.mark.asyncio
     async def test_extract_embedded_mode(self):
-        """Test extract in embedded mode."""
+        """Test extract in embedded mode returns AgentRequestResponse by default."""
         browser = FlyBrowser()
         browser._started = True
-        browser.extraction_agent = MagicMock()
-        browser.extraction_agent.execute = AsyncMock(return_value={"title": "Example"})
+        browser.orchestrator = MagicMock()
+        browser.orchestrator.execute_extract = AsyncMock(return_value={
+            "success": True,
+            "data": {"title": "Example"}
+        })
         
         result = await browser.extract("Get the title")
         
+        # Default: return_metadata=True returns AgentRequestResponse
+        from flybrowser.agents.response import AgentRequestResponse
+        assert isinstance(result, AgentRequestResponse)
+        assert result.data == {"title": "Example"}
+        browser.orchestrator.execute_extract.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_extract_embedded_mode_raw(self):
+        """Test extract in embedded mode with return_metadata=False."""
+        browser = FlyBrowser()
+        browser._started = True
+        browser.orchestrator = MagicMock()
+        browser.orchestrator.execute_extract = AsyncMock(return_value={
+            "success": True,
+            "data": {"title": "Example"}
+        })
+        
+        result = await browser.extract("Get the title", return_metadata=False)
+        
         assert result == {"title": "Example"}
+
+    @pytest.mark.asyncio
+    async def test_extract_embedded_mode_direct(self):
+        """Test extract in embedded mode without orchestrator."""
+        browser = FlyBrowser()
+        browser._started = True
+        browser.extraction_agent = MagicMock()
+        browser.extraction_agent.execute = AsyncMock(return_value={
+            "success": True,
+            "data": {"title": "Example"}
+        })
+        
+        result = await browser.extract("Get the title", use_orchestrator=False, return_metadata=False)
+        
+        assert result == {"title": "Example"}
+        browser.extraction_agent.execute.assert_awaited_once()
 
 
 class TestFlyBrowserAct:
@@ -229,7 +283,7 @@ class TestFlyBrowserAct:
 
     @pytest.mark.asyncio
     async def test_act_server_mode(self):
-        """Test act in server mode."""
+        """Test act in server mode returns AgentRequestResponse by default."""
         browser = FlyBrowser(endpoint="http://localhost:8000")
         browser._started = True
         browser._session_id = "test-session"
@@ -237,6 +291,22 @@ class TestFlyBrowserAct:
         browser._client.action = AsyncMock(return_value={"success": True})
         
         result = await browser.act("Click the button")
+        
+        # Default: return_metadata=True returns AgentRequestResponse
+        from flybrowser.agents.response import AgentRequestResponse
+        assert isinstance(result, AgentRequestResponse)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_act_server_mode_raw(self):
+        """Test act in server mode with return_metadata=False returns raw dict."""
+        browser = FlyBrowser(endpoint="http://localhost:8000")
+        browser._started = True
+        browser._session_id = "test-session"
+        browser._client = AsyncMock()
+        browser._client.action = AsyncMock(return_value={"success": True})
+        
+        result = await browser.act("Click the button", return_metadata=False)
         
         assert result == {"success": True}
 

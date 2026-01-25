@@ -113,7 +113,7 @@ class TestVideoRecording:
     """Tests for VideoRecording dataclass."""
 
     def test_default_values(self):
-        """Test default video recording values."""
+        """Test default video recording values (Full HD)."""
         recording = VideoRecording()
         
         assert recording.id is not None
@@ -122,9 +122,9 @@ class TestVideoRecording:
         assert recording.file_path is None
         assert recording.size_bytes == 0
         assert recording.duration_seconds == 0.0
-        assert recording.width == 1280
-        assert recording.height == 720
-        assert recording.frame_rate == 25
+        assert recording.width == 1920  # Full HD
+        assert recording.height == 1080  # Full HD
+        assert recording.frame_rate == 30
 
 
 class TestScreenshotCapture:

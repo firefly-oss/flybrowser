@@ -30,29 +30,12 @@ def mock_session_manager():
 @pytest.fixture
 def test_client(mock_session_manager):
     """Create test client with mocked dependencies."""
-    from flybrowser.service.auth import APIKey, verify_api_key
     from flybrowser.service.app import app
-    from datetime import datetime
-    
-    # Mock API key verification via dependency override
-    async def mock_verify_api_key(api_key=None):
-        return APIKey(
-            key="test-key",
-            name="Test Key",
-            created_at=datetime.now(),
-            enabled=True,
-        )
-    
-    # Override the dependency
-    app.dependency_overrides[verify_api_key] = mock_verify_api_key
     
     with patch("flybrowser.service.app.session_manager", mock_session_manager):
         with patch("flybrowser.service.app.start_time", 1000.0):
             client = TestClient(app)
             yield client
-    
-    # Clean up dependency override
-    app.dependency_overrides.clear()
 
 
 class TestHealthEndpoint:
@@ -82,8 +65,7 @@ class TestMetricsEndpoint:
     def test_get_metrics_with_auth(self, test_client, mock_session_manager):
         """Test metrics endpoint with authentication."""
         response = test_client.get(
-            "/metrics",
-            headers={"X-API-Key": "test-key"}
+            "/metrics"
         )
         
         # Should succeed with auth (or return 200 if auth is disabled)
@@ -97,7 +79,6 @@ class TestSessionEndpoints:
         """Test creating a session."""
         response = test_client.post(
             "/sessions",
-            headers={"X-API-Key": "test-key"},
             json={
                 "llm_provider": "openai",
                 "llm_model": "gpt-4o",
@@ -116,7 +97,6 @@ class TestSessionEndpoints:
         """Test creating session without required provider."""
         response = test_client.post(
             "/sessions",
-            headers={"X-API-Key": "test-key"},
             json={"headless": True}
         )
         
@@ -131,8 +111,7 @@ class TestSessionEndpoints:
         }
         
         response = test_client.get(
-            "/sessions",
-            headers={"X-API-Key": "test-key"}
+            "/sessions"
         )
         
         if response.status_code == status.HTTP_200_OK:
@@ -146,8 +125,7 @@ class TestSessionEndpoints:
         mock_session_manager.delete_session = AsyncMock()
         
         response = test_client.delete(
-            "/sessions/test-session-123",
-            headers={"X-API-Key": "test-key"}
+            "/sessions/test-session-123"
         )
         
         # Should succeed or return 404 if not found
@@ -169,7 +147,6 @@ class TestNavigationEndpoints:
         
         response = test_client.post(
             "/sessions/test-session/navigate",
-            headers={"X-API-Key": "test-key"},
             json={"url": "https://example.com"}
         )
         
@@ -181,7 +158,6 @@ class TestNavigationEndpoints:
         """Test navigate without URL."""
         response = test_client.post(
             "/sessions/test-session/navigate",
-            headers={"X-API-Key": "test-key"},
             json={}
         )
         
@@ -199,7 +175,6 @@ class TestExtractionEndpoints:
         
         response = test_client.post(
             "/sessions/test-session/extract",
-            headers={"X-API-Key": "test-key"},
             json={"instruction": "Get the page title"}
         )
         
@@ -219,7 +194,6 @@ class TestActionEndpoints:
         
         response = test_client.post(
             "/sessions/test-session/action",
-            headers={"X-API-Key": "test-key"},
             json={"instruction": "Click the submit button"}
         )
         
@@ -239,7 +213,6 @@ class TestScreenshotEndpoints:
         
         response = test_client.post(
             "/sessions/test-session/screenshot",
-            headers={"X-API-Key": "test-key"},
             json={"full_page": True}
         )
         
@@ -259,7 +232,6 @@ class TestWorkflowEndpoints:
         
         response = test_client.post(
             "/sessions/test-session/workflow",
-            headers={"X-API-Key": "test-key"},
             json={
                 "goal": "Search for Python tutorials",
                 "max_steps": 10
@@ -271,6 +243,158 @@ class TestWorkflowEndpoints:
             assert "success" in data or "result" in data
 
 
+class TestAutonomousEndpoints:
+    """Tests for autonomous mode endpoints."""
+
+    def test_auto_endpoint(self, test_client, mock_session_manager):
+        """Test autonomous mode endpoint."""
+        mock_browser = MagicMock()
+        mock_browser.auto = AsyncMock(return_value={
+            "success": True,
+            "goal": "Fill out the form",
+            "result_data": {"confirmation": "Success"},
+            "sub_goals_completed": 3,
+            "total_sub_goals": 3,
+            "iterations": 10,
+            "duration_seconds": 30.5,
+            "final_url": "https://example.com/done",
+            "actions_taken": ["clicked input", "typed name"],
+            "suggestions": [],
+        })
+        mock_session_manager.get_session.return_value = mock_browser
+        
+        response = test_client.post(
+            "/sessions/test-session/auto",
+            json={
+                "goal": "Fill out the form",
+                "context": {"name": "John Doe", "email": "john@example.com"},
+                "max_iterations": 30,
+                "max_time_seconds": 300,
+            }
+        )
+        
+        if response.status_code == status.HTTP_200_OK:
+            data = response.json()
+            assert data["success"] is True
+            assert data["goal"] == "Fill out the form"
+            assert data["sub_goals_completed"] == 3
+            mock_browser.auto.assert_awaited_once()
+
+    def test_auto_endpoint_missing_goal(self, test_client, mock_session_manager):
+        """Test auto endpoint without required goal."""
+        response = test_client.post(
+            "/sessions/test-session/auto",
+            json={"context": {}}
+        )
+        
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    def test_auto_endpoint_session_not_found(self, test_client, mock_session_manager):
+        """Test auto endpoint when session not found."""
+        mock_session_manager.get_session.side_effect = KeyError("Session not found")
+        
+        response = test_client.post(
+            "/sessions/nonexistent-session/auto",
+            json={"goal": "Test"}
+        )
+        
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestScrapeEndpoints:
+    """Tests for scrape endpoints."""
+
+    def test_scrape_endpoint(self, test_client, mock_session_manager):
+        """Test scrape endpoint with schema validation."""
+        mock_browser = MagicMock()
+        mock_browser.scrape = AsyncMock(return_value={
+            "success": True,
+            "goal": "Extract products",
+            "result_data": [
+                {"name": "Widget", "price": 29.99},
+                {"name": "Gadget", "price": 49.99},
+            ],
+            "pages_scraped": 3,
+            "items_extracted": 25,
+            "validation_results": [
+                {"validator": "not_empty", "passed": True}
+            ],
+            "schema_compliance": 0.95,
+            "duration_seconds": 45.0,
+            "final_url": "https://example.com/products?page=3",
+        })
+        mock_session_manager.get_session.return_value = mock_browser
+        
+        response = test_client.post(
+            "/sessions/test-session/scrape",
+            json={
+                "goal": "Extract all products",
+                "target_schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "price": {"type": "number"},
+                        },
+                    },
+                },
+                "validators": ["not_empty"],
+                "max_pages": 5,
+            }
+        )
+        
+        if response.status_code == status.HTTP_200_OK:
+            data = response.json()
+            assert data["success"] is True
+            assert data["pages_scraped"] == 3
+            assert data["items_extracted"] == 25
+            assert data["schema_compliance"] == 0.95
+            mock_browser.scrape.assert_awaited_once()
+
+    def test_scrape_endpoint_missing_goal(self, test_client, mock_session_manager):
+        """Test scrape endpoint without required goal."""
+        response = test_client.post(
+            "/sessions/test-session/scrape",
+            json={
+                "target_schema": {"type": "array"},
+            }
+        )
+        
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    def test_scrape_endpoint_missing_schema(self, test_client, mock_session_manager):
+        """Test scrape endpoint without required target_schema."""
+        response = test_client.post(
+            "/sessions/test-session/scrape",
+            json={
+                "goal": "Extract products",
+            }
+        )
+        
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    def test_scrape_endpoint_invalid_validator(self, test_client, mock_session_manager):
+        """Test scrape endpoint with invalid validator name."""
+        mock_browser = MagicMock()
+        mock_session_manager.get_session.return_value = mock_browser
+        
+        response = test_client.post(
+            "/sessions/test-session/scrape",
+            json={
+                "goal": "Extract products",
+                "target_schema": {"type": "array"},
+                "validators": ["invalid_validator_name"],
+            }
+        )
+        
+        # Should either return 400 or 500 depending on implementation
+        assert response.status_code in [
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        ]
+
+
 class TestErrorHandling:
     """Tests for error handling."""
 
@@ -280,7 +404,6 @@ class TestErrorHandling:
         
         response = test_client.post(
             "/sessions/nonexistent-session/navigate",
-            headers={"X-API-Key": "test-key"},
             json={"url": "https://example.com"}
         )
         

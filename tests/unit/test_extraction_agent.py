@@ -57,10 +57,13 @@ class TestExtractionAgentExecute:
         
         mock_llm = MagicMock()
         mock_llm.generate = AsyncMock(
-            return_value=MagicMock(content=json.dumps({"title": "Example"}))
+            return_value=MagicMock(content=json.dumps({"extracted_data": {"title": "Example"}}))
         )
         
         agent = ExtractionAgent(mock_page, mock_detector, mock_llm)
+        # Mock the validator to return the expected data
+        agent.validator = MagicMock()
+        agent.validator.validate_and_fix = AsyncMock(return_value={"title": "Example"})
         
         result = await agent.execute("Extract the title", use_vision=False)
         
@@ -83,10 +86,13 @@ class TestExtractionAgentExecute:
         
         mock_llm = MagicMock()
         mock_llm.generate_with_vision = AsyncMock(
-            return_value=MagicMock(content=json.dumps({"colors": ["blue", "white"]}))
+            return_value=MagicMock(content=json.dumps({"extracted_data": {"colors": ["blue", "white"]}}))
         )
         
         agent = ExtractionAgent(mock_page, mock_detector, mock_llm)
+        # Mock the validator
+        agent.validator = MagicMock()
+        agent.validator.validate_and_fix = AsyncMock(return_value={"colors": ["blue", "white"]})
         
         result = await agent.execute("What colors are on the page?", use_vision=True)
         
@@ -106,11 +112,16 @@ class TestExtractionAgentExecute:
         mock_detector = MagicMock()
         
         mock_llm = MagicMock()
-        mock_llm.generate_structured = AsyncMock(
-            return_value={"products": [{"name": "Item1", "price": 10.99}]}
+        mock_llm.generate = AsyncMock(
+            return_value=MagicMock(content=json.dumps({"products": [{"name": "Item1", "price": 10.99}]}))
         )
         
         agent = ExtractionAgent(mock_page, mock_detector, mock_llm)
+        # Mock the validator to return the expected data
+        agent.validator = MagicMock()
+        agent.validator.validate_and_fix = AsyncMock(
+            return_value={"products": [{"name": "Item1", "price": 10.99}]}
+        )
         
         schema = {
             "type": "object",
@@ -139,7 +150,7 @@ class TestExtractionAgentExecute:
 
     @pytest.mark.asyncio
     async def test_execute_returns_text_on_invalid_json(self):
-        """Test execute returns text when LLM returns invalid JSON."""
+        """Test execute returns text when LLM returns invalid JSON but validator fixes it."""
         mock_page = MagicMock()
         mock_page.get_url = AsyncMock(return_value="https://example.com")
         mock_page.get_title = AsyncMock(return_value="Example")
@@ -153,6 +164,11 @@ class TestExtractionAgentExecute:
         )
         
         agent = ExtractionAgent(mock_page, mock_detector, mock_llm)
+        # Mock the validator to return extracted_text when parsing invalid JSON
+        agent.validator = MagicMock()
+        agent.validator.validate_and_fix = AsyncMock(
+            return_value={"extracted_text": "The title is 'Example Domain'"}
+        )
         
         result = await agent.execute("What is the title?", use_vision=False)
         
@@ -199,12 +215,17 @@ class TestExtractionAgentExecute:
         )
         
         agent = ExtractionAgent(mock_page, mock_detector, mock_llm)
+        # Mock the validator
+        agent.validator = MagicMock()
+        agent.validator.validate_and_fix = AsyncMock(return_value={"result": "ok"})
         
         result = await agent.execute("Extract something", use_vision=False)
         
         # Should still work despite long HTML
         assert result["success"] is True
-        assert result["data"] == {"result": "ok"}
+        # Data includes metadata now, check for expected key
+        assert "result" in result["data"]
+        assert result["data"]["result"] == "ok"
         mock_llm.generate.assert_awaited_once()
 
 

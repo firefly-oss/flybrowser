@@ -76,7 +76,10 @@ class TestNavigationAgentInit:
     """Tests for NavigationAgent initialization."""
 
     def test_init_default_values(self):
-        """Test default initialization values."""
+        """Test default initialization values from performance config."""
+        from flybrowser.core.performance import get_performance_config
+        perf = get_performance_config()
+        
         mock_page = MagicMock()
         mock_detector = MagicMock()
         mock_llm = MagicMock()
@@ -86,8 +89,8 @@ class TestNavigationAgentInit:
         assert agent.page is mock_page
         assert agent.detector is mock_detector
         assert agent.llm is mock_llm
-        assert agent.default_timeout == 30000
-        assert agent.default_wait_strategy == WaitStrategy.DOM_CONTENT_LOADED
+        assert agent.default_timeout == perf.navigation_timeout_ms
+        assert agent.default_wait_strategy == WaitStrategy(perf.wait_strategy.value)
 
     def test_init_custom_values(self):
         """Test initialization with custom values."""
