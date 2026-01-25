@@ -71,6 +71,12 @@ from flybrowser.agents.tools.system import (
 from flybrowser.agents.tools.search_api import SearchAPITool
 from flybrowser.agents.tools.search_human import SearchHumanTool
 from flybrowser.agents.tools.search_rank import SearchRankTool
+from flybrowser.agents.tools.search import SearchAgentTool
+from flybrowser.agents.tools.captcha import (
+    DetectCaptchaTool,
+    SolveCaptchaTool,
+    WaitForCaptchaResolvedTool,
+)
 from flybrowser.agents.tools.page_analyzer import PageAnalyzer
 from flybrowser.agents.strategy_selector import StrategySelector
 from flybrowser.agents.config import PageAnalysisConfig
@@ -133,6 +139,9 @@ class ReActBrowserAgent:
         
         # Initialize memory if enabled
         self.memory = AgentMemory() if enable_memory else None
+        
+        # Stealth components (can be set after construction)
+        self.captcha_solver = None
         
         # Initialize intelligent strategy selector for autonomous mode
         self.strategy_selector = StrategySelector()
@@ -248,23 +257,54 @@ class ReActBrowserAgent:
         self.registry.register(WaitTool)
         self.registry.register(AskUserTool)
         
-        # Search tools - conditionally register based on API key availability
-        search_api_tool = SearchAPITool()
-        if search_api_tool.has_api_keys_configured():
-            self.registry.register(SearchAPITool)
-            logger.info("Registered SearchAPITool (API keys detected)")
-        else:
-            logger.info(
-                "SearchAPITool not registered (no API keys). "
-                "Using SearchHumanTool instead. "
-                "Set GOOGLE_CUSTOM_SEARCH_API_KEY/CX or BING_SEARCH_API_KEY to enable API search."
+        # Search tools - register the new unified SearchAgentTool if API keys are available
+        # This provides LLM-powered intent detection and multi-provider search
+        search_agent_tool = SearchAgentTool()
+        if search_agent_tool.has_providers_configured():
+            # Create and register the configured SearchAgentTool
+            configured_search_tool = SearchAgentTool.create(
+                llm_provider=self.llm,
+                config=self.config.search_providers if hasattr(self.config, 'search_providers') else None,
             )
+            self.registry.register_instance(configured_search_tool)
+            logger.info("Registered SearchAgentTool (API keys detected)")
+        else:
+            # Fall back to legacy SearchAPITool if available
+            search_api_tool = SearchAPITool()
+            if search_api_tool.has_api_keys_configured():
+                self.registry.register(SearchAPITool)
+                logger.info("Registered SearchAPITool (legacy, API keys detected)")
+            else:
+                logger.info(
+                    "No search API tools registered (no API keys). "
+                    "Using SearchHumanTool as fallback. "
+                    "Set SERPER_API_KEY, GOOGLE_CUSTOM_SEARCH_API_KEY/CX, or BING_SEARCH_API_KEY to enable API search."
+                )
         
-        # Always register human-like search as fallback
+        # Always register human-like search as fallback for browser-based search
         self.registry.register(SearchHumanTool)
         
-        # Register search result analysis tool
+        # Register search result analysis tool for ranking
         self.registry.register(SearchRankTool)
+        
+        # CAPTCHA tools - always register detection, solving only if configured
+        detect_captcha_tool = DetectCaptchaTool(page_controller=self.page)
+        self.registry.register_instance(detect_captcha_tool)
+        
+        # Wait for CAPTCHA resolution (useful for Cloudflare challenges)
+        wait_captcha_tool = WaitForCaptchaResolvedTool(page_controller=self.page)
+        self.registry.register_instance(wait_captcha_tool)
+        
+        # CAPTCHA solving tool - only if solver is configured
+        if self.captcha_solver:
+            solve_captcha_tool = SolveCaptchaTool(
+                page_controller=self.page,
+                captcha_solver=self.captcha_solver,
+            )
+            self.registry.register_instance(solve_captcha_tool)
+            logger.info("[CAPTCHA] SolveCaptchaTool registered with solver")
+        else:
+            logger.info("[CAPTCHA] CAPTCHA detection tools registered (solver not configured)")
         
         logger.info(f"Registered {len(self.registry)} default tools")
     

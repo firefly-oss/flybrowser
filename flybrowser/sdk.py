@@ -97,6 +97,10 @@ class FlyBrowser:
         log_verbosity: str = "normal",
         agent_config: Optional["AgentConfig"] = None,
         config_file: Optional[str] = None,
+        search_provider: Optional[str] = None,
+        search_api_key: Optional[str] = None,
+        stealth_config: Optional["StealthConfig"] = None,
+        observability_config: Optional["ObservabilityConfig"] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -142,6 +146,37 @@ class FlyBrowser:
             config_file: Path to YAML or JSON config file for agent configuration.
                 Example: config_file="config.yaml"
                 If both agent_config and config_file are None, uses defaults.
+            search_provider: Preferred search provider for API-based search.
+                Options: "serper", "google", "bing", "auto" (default: auto)
+                - "serper": Serper.dev API (fast, affordable, recommended)
+                - "google": Google Custom Search API
+                - "bing": Bing Web Search API
+                - "auto": Automatically select best available provider
+                Note: Requires corresponding API key environment variable:
+                - SERPER_API_KEY for Serper.dev
+                - GOOGLE_CUSTOM_SEARCH_API_KEY + GOOGLE_CUSTOM_SEARCH_CX for Google
+                - BING_SEARCH_API_KEY for Bing
+            search_api_key: API key for the search provider. If not provided,
+                falls back to environment variables.
+            stealth_config: Optional StealthConfig for advanced stealth capabilities.
+                Enables fingerprint generation, managed CAPTCHA solving, and
+                intelligent proxy network. Example:
+                >>> from flybrowser.stealth import StealthConfig
+                >>> stealth = StealthConfig(
+                ...     fingerprint_enabled=True,
+                ...     captcha_enabled=True,
+                ...     captcha_provider="2captcha",
+                ...     proxy_enabled=True,
+                ... )
+            observability_config: Optional ObservabilityConfig for session debugging.
+                Enables command logging, source capture, and live view streaming.
+                Example:
+                >>> from flybrowser.observability import ObservabilityConfig
+                >>> obs = ObservabilityConfig(
+                ...     enable_command_logging=True,
+                ...     enable_live_view=True,
+                ...     live_view_port=8765,
+                ... )
             **kwargs: Additional configuration options
 
         Example - Embedded Mode:
@@ -197,8 +232,12 @@ class FlyBrowser:
         self._speed_preset = speed_preset
         self._kwargs = kwargs
         
+        # Store search configuration
+        self._search_provider = search_provider
+        self._search_api_key = search_api_key
+        
         # Load agent configuration
-        from flybrowser.agents.config import AgentConfig
+        from flybrowser.agents.config import AgentConfig, SearchProviderConfig
         
         if agent_config is not None:
             self._agent_config = agent_config
@@ -219,6 +258,37 @@ class FlyBrowser:
             self._agent_config = AgentConfig()
             self._agent_config.apply_env_overrides()
             logger.info("Using default AgentConfig with environment overrides")
+        
+        # Apply search provider configuration
+        if search_provider:
+            self._agent_config.search_providers.default_provider = search_provider
+            logger.info(f"Search provider set to: {search_provider}")
+        
+        # Set up search API key in environment if provided
+        if search_api_key:
+            import os
+            # Determine which env var to set based on provider
+            provider = (search_provider or "serper").lower()
+            if provider == "serper":
+                os.environ["SERPER_API_KEY"] = search_api_key
+            elif provider == "google":
+                os.environ["GOOGLE_CUSTOM_SEARCH_API_KEY"] = search_api_key
+            elif provider == "bing":
+                os.environ["BING_SEARCH_API_KEY"] = search_api_key
+            logger.info(f"Search API key configured for {provider}")
+        
+        # Store stealth configuration
+        self._stealth_config = stealth_config
+        if stealth_config:
+            logger.info(f"Stealth config: fingerprint={stealth_config.fingerprint_enabled}, "
+                       f"captcha={stealth_config.captcha_enabled}, proxy={stealth_config.proxy_enabled}")
+        
+        # Store observability configuration
+        self._observability_config = observability_config
+        if observability_config:
+            logger.info(f"Observability config: logging={observability_config.enable_command_logging}, "
+                       f"capture={observability_config.enable_source_capture}, "
+                       f"live_view={observability_config.enable_live_view}")
 
         # Unified logging configuration based on log_verbosity
         # Maps verbosity to: (execution_verbosity, python_log_level, llm_logging_level)
@@ -260,6 +330,17 @@ class FlyBrowser:
         self._local_stream_server = None
         self._local_stream_port = None
         self._active_stream_id = None
+        
+        # Stealth components
+        self._fingerprint = None
+        self._captcha_solver = None
+        self._proxy_network = None
+        
+        # Observability components
+        self._observability_manager = None
+        self._command_logger = None
+        self._source_capture = None
+        self._live_view_server = None
         
         # ReAct framework (native implementation)
         self.react_agent = None
@@ -403,14 +484,102 @@ class FlyBrowser:
         logger.info(f"Wait Strategy: {perf_config.wait_strategy.value}")
         logger.info(f"Max Retries: {perf_config.max_retries}")
 
+        # Initialize stealth components if configured
+        fingerprint_profile = None
+        if self._stealth_config and self._stealth_config.fingerprint_enabled:
+            try:
+                from flybrowser.stealth.fingerprint import FingerprintGenerator
+                generator = FingerprintGenerator()
+                fingerprint_profile = generator.generate()
+                self._fingerprint = fingerprint_profile
+                logger.info(f"[STEALTH] Generated fingerprint: {fingerprint_profile.os_type.value}/{fingerprint_profile.browser_type.value}")
+            except ImportError:
+                logger.warning("[STEALTH] Fingerprint module not available")
+        
+        # Initialize CAPTCHA solver if configured
+        if self._stealth_config and self._stealth_config.captcha_enabled:
+            try:
+                from flybrowser.stealth.captcha import CaptchaSolver, CaptchaProviderConfig
+                config = CaptchaProviderConfig(
+                    provider=self._stealth_config.captcha_provider or "2captcha",
+                    api_key=self._stealth_config.captcha_api_key,
+                )
+                self._captcha_solver = CaptchaSolver(config)
+                logger.info(f"[STEALTH] CAPTCHA solver initialized: {config.provider}")
+            except ImportError:
+                logger.warning("[STEALTH] CAPTCHA solver module not available")
+        
+        # Initialize proxy network if configured
+        # Note: This is the advanced ProxyNetwork from stealth package, which provides:
+        # - Intelligent target-aware proxy selection
+        # - Fingerprint-proxy-geolocation consistency  
+        # - Multiple residential proxy provider support
+        # For simpler use cases, use proxy_rotator parameter instead.
+        proxy_for_browser = None
+        if self._stealth_config and self._stealth_config.proxy_enabled:
+            try:
+                from flybrowser.stealth.proxy import ProxyNetwork, ProxyNetworkConfig
+                
+                # Get proxy config from stealth config
+                proxy_config = self._stealth_config.get_proxy_config()
+                
+                self._proxy_network = ProxyNetwork(
+                    config=proxy_config,
+                    fingerprint=fingerprint_profile,  # For consistency
+                )
+                
+                # Get initial proxy for browser context
+                initial_proxy = await self._proxy_network.get_proxy()
+                if initial_proxy:
+                    proxy_for_browser = initial_proxy.to_playwright_format()
+                    logger.info(f"[STEALTH] Using proxy: {initial_proxy.host}:{initial_proxy.port} ({initial_proxy.country})")
+                
+                logger.info("[STEALTH] Proxy network initialized")
+            except ImportError:
+                logger.warning("[STEALTH] Proxy network module not available")
+            except Exception as e:
+                logger.warning(f"[STEALTH] Failed to initialize proxy network: {e}")
+        
         # Initialize browser manager with stealth mode enabled
+        # Pass proxy_for_browser if we got one from ProxyNetwork
         logger.info(f"Browser: {self._browser_type} (headless={self._headless}, stealth=True)")
-        self.browser_manager = BrowserManager(
-            headless=self._headless,
-            browser_type=self._browser_type,
-            stealth=True,  # Enable anti-detection by default
-        )
+        
+        # Build browser manager kwargs
+        browser_kwargs = {
+            "headless": self._headless,
+            "browser_type": self._browser_type,
+            "stealth": True,  # Enable anti-detection by default
+            "fingerprint": fingerprint_profile,  # Use generated fingerprint if available
+        }
+        
+        # Add proxy if we got one from ProxyNetwork
+        if proxy_for_browser:
+            browser_kwargs["proxy"] = proxy_for_browser
+        
+        self.browser_manager = BrowserManager(**browser_kwargs)
         await self.browser_manager.start()
+        
+        # Initialize observability components if configured
+        if self._observability_config:
+            try:
+                from flybrowser.observability import ObservabilityManager
+                self._observability_manager = ObservabilityManager(self._observability_config)
+                
+                # Attach to page for live view if enabled
+                if self._observability_config.enable_live_view:
+                    await self._observability_manager.attach(self.browser_manager.page)
+                    live_url = self._observability_manager.get_live_view_url()
+                    if live_url:
+                        logger.info(f"[OBSERVABILITY] Live View available at: {live_url}")
+                
+                # Store component references
+                self._command_logger = self._observability_manager.command_logger
+                self._source_capture = self._observability_manager.source_capture
+                self._live_view_server = self._observability_manager.live_view
+                
+                logger.info("[OBSERVABILITY] Observability layer initialized")
+            except ImportError as e:
+                logger.warning(f"[OBSERVABILITY] Observability modules not available: {e}")
 
         # Initialize PII handler first (needed by agents)
         pii_config = PIIConfig(enabled=self._pii_masking_enabled)
@@ -435,6 +604,11 @@ class FlyBrowser:
         
         # Initialize ReAct framework (now the native implementation)
         await self._initialize_react_framework()
+        
+        # Wire stealth components to ReAct agent after initialization
+        if self._captcha_solver and self.react_agent:
+            self.react_agent.captcha_solver = self._captcha_solver
+            logger.info("[STEALTH] CAPTCHA solver wired to ReAct agent")
 
     async def _initialize_react_framework(self) -> None:
         """Initialize the new ReAct framework."""
@@ -480,6 +654,231 @@ class FlyBrowser:
         self._llm_logging = level if enabled else 0
         if self.llm:
             self.llm.enable_llm_logging(enabled, level)
+    
+    def configure_search(
+        self,
+        provider: Optional[str] = None,
+        api_key: Optional[str] = None,
+        enable_ranking: Optional[bool] = None,
+        ranking_weights: Optional[Dict[str, float]] = None,
+        cache_ttl_seconds: Optional[int] = None,
+    ) -> None:
+        """
+        Configure search settings at runtime.
+        
+        This allows you to change search provider settings after initialization.
+        Changes take effect immediately for subsequent search operations.
+        
+        Args:
+            provider: Search provider to use. Options:
+                - "serper": Serper.dev API (recommended, fast, affordable)
+                - "google": Google Custom Search API
+                - "bing": Bing Web Search API
+                - "auto": Automatically select best available
+            api_key: API key for the search provider. Sets the appropriate
+                environment variable based on provider.
+            enable_ranking: Enable intelligent result ranking (default: True)
+            ranking_weights: Custom ranking weights. Dictionary with keys:
+                - "bm25": Keyword relevance (default: 0.35)
+                - "freshness": Recency (default: 0.20)
+                - "domain_authority": Source quality (default: 0.15)
+                - "position": Original search engine ranking (default: 0.30)
+            cache_ttl_seconds: Cache TTL in seconds (default: 300)
+        
+        Example:
+            >>> # Switch to Serper.dev provider
+            >>> browser.configure_search(provider="serper", api_key="your-key")
+            
+            >>> # Prioritize fresh results for news searches
+            >>> browser.configure_search(ranking_weights={
+            ...     "freshness": 0.45,
+            ...     "bm25": 0.25,
+            ...     "domain_authority": 0.15,
+            ...     "position": 0.15,
+            ... })
+        """
+        import os
+        
+        if provider:
+            self._search_provider = provider
+            self._agent_config.search_providers.default_provider = provider
+            logger.info(f"Search provider changed to: {provider}")
+        
+        if api_key:
+            self._search_api_key = api_key
+            # Set environment variable based on provider
+            prov = (provider or self._search_provider or "serper").lower()
+            if prov == "serper":
+                os.environ["SERPER_API_KEY"] = api_key
+            elif prov == "google":
+                os.environ["GOOGLE_CUSTOM_SEARCH_API_KEY"] = api_key
+            elif prov == "bing":
+                os.environ["BING_SEARCH_API_KEY"] = api_key
+            logger.info(f"Search API key configured for {prov}")
+        
+        if enable_ranking is not None:
+            self._agent_config.search_providers.enable_ranking = enable_ranking
+            logger.info(f"Search ranking {'enabled' if enable_ranking else 'disabled'}")
+        
+        if ranking_weights:
+            self._agent_config.search_providers.ranking_weights.update(ranking_weights)
+            logger.info(f"Search ranking weights updated: {ranking_weights}")
+        
+        if cache_ttl_seconds is not None:
+            self._agent_config.search_providers.cache_ttl_seconds = cache_ttl_seconds
+            logger.info(f"Search cache TTL set to: {cache_ttl_seconds}s")
+    
+    async def search(
+        self,
+        query: str,
+        search_type: str = "auto",
+        max_results: int = 10,
+        ranking: str = "auto",
+        return_metadata: bool = True,
+    ) -> Union[Dict[str, Any], "AgentRequestResponse"]:
+        """
+        Perform a web search using the configured search provider.
+        
+        This is a convenience method that directly invokes the search tool
+        without going through the full ReAct reasoning loop. It's faster
+        for simple search queries.
+        
+        Args:
+            query: Search query or natural language instruction.
+                Examples:
+                - "Python tutorials" (direct query)
+                - "Find images of sunset" (instruction, auto-detects image search)
+                - "Latest news about AI" (instruction, auto-detects news search)
+            search_type: Type of search to perform. Options:
+                - "auto": Automatically detect based on query (default)
+                - "web": Standard web search
+                - "images": Image search
+                - "news": News search
+                - "videos": Video search
+                - "places": Local/places search
+                - "shopping": Shopping/product search
+            max_results: Maximum number of results (1-50, default: 10)
+            ranking: Result ranking preference. Options:
+                - "auto": Automatically select based on query (default)
+                - "balanced": Balanced ranking (default weights)
+                - "relevance": Prioritize keyword relevance
+                - "freshness": Prioritize recent results
+                - "authority": Prioritize authoritative sources
+            return_metadata: Return AgentRequestResponse with metadata (default: True)
+        
+        Returns:
+            Search results with ranked items. Format:
+            {
+                "query": str,
+                "search_type": str,
+                "results": [
+                    {
+                        "title": str,
+                        "url": str,
+                        "snippet": str,
+                        "relevance_score": float,
+                        "domain": str,
+                    },
+                    ...
+                ],
+                "result_count": int,
+                "provider_used": str,
+                "answer_box": dict | None,
+                "knowledge_graph": dict | None,
+                "related_searches": list[str],
+            }
+        
+        Example:
+            >>> # Simple web search
+            >>> results = await browser.search("Python tutorials")
+            >>> for r in results.data["results"]:
+            ...     print(f"{r['title']}: {r['url']}")
+            
+            >>> # Image search
+            >>> images = await browser.search("sunset photos", search_type="images")
+            
+            >>> # News search with freshness ranking
+            >>> news = await browser.search("AI news", search_type="news", ranking="freshness")
+            
+            >>> # Auto-detect search type from query
+            >>> results = await browser.search("Find the latest news about Python 4.0")
+        """
+        from flybrowser.agents.response import create_response
+        
+        self._ensure_started()
+        
+        if self._mode == "server":
+            # Server mode: use search endpoint if available
+            try:
+                response = await self._client._request(
+                    "POST",
+                    f"/sessions/{self._session_id}/search",
+                    json={
+                        "query": query,
+                        "search_type": search_type,
+                        "max_results": max_results,
+                        "ranking": ranking,
+                    },
+                )
+                result = response or {}
+                if return_metadata:
+                    return create_response(
+                        success=result.get("success", len(result.get("results", [])) > 0),
+                        data=result,
+                        error=result.get("error"),
+                        operation="search",
+                        query=query,
+                    )
+                return result
+            except Exception as e:
+                logger.warning(f"Server search failed, falling back to agent: {e}")
+                # Fall through to agent-based search
+        
+        # Embedded mode: Use SearchAgentTool directly for faster execution
+        try:
+            from flybrowser.agents.tools.search import SearchAgentTool
+            
+            # Get or create search tool
+            search_tool = SearchAgentTool.create(
+                llm_provider=self.llm,
+                config=self._agent_config.search_providers,
+            )
+            
+            # Execute search
+            result = await search_tool.execute(
+                query=query,
+                search_type=search_type,
+                max_results=max_results,
+                ranking=ranking,
+            )
+            
+            if return_metadata:
+                return create_response(
+                    success=result.success,
+                    data=result.data,
+                    error=result.error,
+                    operation="search",
+                    query=query,
+                    metadata=result.metadata,
+                )
+            
+            return {
+                "success": result.success,
+                "data": result.data,
+                "error": result.error,
+            }
+            
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            if return_metadata:
+                return create_response(
+                    success=False,
+                    data=None,
+                    error=str(e),
+                    operation="search",
+                    query=query,
+                )
+            return {"success": False, "data": None, "error": str(e)}
 
     async def stop(self) -> None:
         """
@@ -503,6 +902,24 @@ class FlyBrowser:
             if self._client:
                 await self._client.stop()
         else:
+            # Stop observability components first
+            if self._observability_manager:
+                try:
+                    await self._observability_manager.detach()
+                    logger.info("[OBSERVABILITY] Observability manager stopped")
+                except Exception as e:
+                    logger.warning(f"Error stopping observability: {e}")
+            
+            # Export observability data if configured
+            if (self._observability_config and 
+                self._observability_config.output_dir and
+                (self._command_logger or self._source_capture)):
+                try:
+                    self._observability_manager.export_all(self._observability_config.output_dir)
+                    logger.info(f"[OBSERVABILITY] Data exported to {self._observability_config.output_dir}")
+                except Exception as e:
+                    logger.warning(f"Error exporting observability data: {e}")
+            
             # Stop active stream if any
             if self._active_stream_id:
                 try:
@@ -1098,18 +1515,20 @@ class FlyBrowser:
         # This only happens after the entire agent query is solved (success or failure)
         if self.browser_manager:
             try:
-                await self.browser_manager._load_completion_page(
-                    success=result_dict.get("success", False),
+                # Extract completion data safely using helper function
+                completion_data = self._extract_completion_data(
+                    result_dict=result_dict,
                     task=task,
-                    duration_ms=result_dict.get("execution_time_ms", 0),
-                    iterations=result_dict.get("total_iterations", 0),
-                    result_data=result_dict.get("result"),
-                    error_message=result_dict.get("error"),
-                    max_iterations=result_dict.get("max_iterations"),
+                    session_id=self._session_id,
                 )
+                
+                await self.browser_manager._load_completion_page(**completion_data)
             except Exception as e:
                 # Don't fail the overall operation if completion page fails
-                logger.debug(f"Could not load completion page: {e}")
+                # But log at warning level so users can see if something went wrong
+                logger.warning(f"[COMPLETION] Could not load completion page: {e}")
+                import traceback
+                logger.debug(f"[COMPLETION] Traceback: {traceback.format_exc()}")
         
         if return_metadata:
             # Convert dict to AgentRequestResponse
@@ -2212,6 +2631,136 @@ class FlyBrowser:
     def endpoint(self) -> Optional[str]:
         """Get the server endpoint (server mode only)."""
         return self._endpoint
+
+    def _extract_completion_data(
+        self,
+        result_dict: Dict[str, Any],
+        task: str,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Extract and transform agent result data for the completion page.
+        
+        This method safely extracts tools_used, reasoning_steps, and other metadata
+        from the agent result, handling both ReActStep objects and dict representations.
+        All values are validated and transformed to ensure the template can render
+        without errors.
+        
+        Args:
+            result_dict: The raw result dictionary from agent execution
+            task: The task description that was executed
+            session_id: Optional session ID for metadata
+            
+        Returns:
+            Dictionary of validated parameters for _load_completion_page()
+        """
+        # Safely extract tools_used from steps
+        tools_used: List[Dict[str, Any]] = []
+        reasoning_steps: List[Dict[str, Any]] = []
+        
+        steps_data = result_dict.get("steps") or []
+        
+        for step in steps_data:
+            if step is None:
+                continue
+                
+            try:
+                # Handle ReActStep objects (have 'action' attribute)
+                if hasattr(step, 'action') and step.action is not None:
+                    # Extract action info
+                    action_obj = step.action
+                    tool_name = getattr(action_obj, 'tool_name', None) or 'unknown'
+                    
+                    # Determine success: check observation.success if available
+                    success = True
+                    if hasattr(step, 'observation') and step.observation is not None:
+                        success = getattr(step.observation, 'success', True)
+                    
+                    tools_used.append({
+                        "name": str(tool_name),
+                        "duration_ms": int(getattr(step, 'duration_ms', 0) or 0),
+                        "success": bool(success),
+                    })
+                    
+                    # Extract thought if available
+                    if hasattr(step, 'thought') and step.thought is not None:
+                        thought_obj = step.thought
+                        thought_content = getattr(thought_obj, 'content', None)
+                        if thought_content is None:
+                            thought_content = str(thought_obj)
+                        
+                        reasoning_steps.append({
+                            "thought": str(thought_content),
+                            "action": str(tool_name),
+                        })
+                
+                # Handle dict representations
+                elif isinstance(step, dict):
+                    action = step.get("action")
+                    if action and isinstance(action, dict):
+                        tool_name = action.get("tool_name") or "unknown"
+                        
+                        # Determine success from observation if available
+                        observation_success = step.get("observation_success")
+                        success = observation_success if observation_success is not None else True
+                        
+                        tools_used.append({
+                            "name": str(tool_name),
+                            "duration_ms": int(step.get("duration_ms", 0) or 0),
+                            "success": bool(success),
+                        })
+                        
+                        # Extract thought if available
+                        thought = step.get("thought")
+                        if thought:
+                            reasoning_steps.append({
+                                "thought": str(thought),
+                                "action": str(tool_name),
+                            })
+                            
+            except Exception as e:
+                # Log but don't fail - skip malformed steps
+                logger.debug(f"[COMPLETION] Skipped malformed step: {e}")
+                continue
+        
+        # Safely extract LLM usage - ensure all fields have defaults
+        raw_llm_usage = result_dict.get("llm_usage")
+        llm_usage: Optional[Dict[str, Any]] = None
+        
+        if raw_llm_usage and isinstance(raw_llm_usage, dict):
+            llm_usage = {
+                "model": str(raw_llm_usage.get("model") or "unknown"),
+                "provider": str(raw_llm_usage.get("provider") or "unknown"),
+                "prompt_tokens": int(raw_llm_usage.get("prompt_tokens") or 0),
+                "completion_tokens": int(raw_llm_usage.get("completion_tokens") or 0),
+                "total_tokens": int(raw_llm_usage.get("total_tokens") or 0),
+                "cost_usd": float(raw_llm_usage.get("cost_usd") or 0.0),
+                "request_count": int(raw_llm_usage.get("calls_count") or raw_llm_usage.get("request_count") or 1),
+                "avg_latency_ms": float(raw_llm_usage.get("avg_latency_ms") or 0.0),
+            }
+        
+        # Build metadata with safe defaults
+        metadata = {
+            "session_id": str(session_id or "N/A"),
+            "reasoning_strategy": str(result_dict.get("final_state", "completed")),
+            "stop_reason": "completed" if result_dict.get("success") else "error",
+        }
+        
+        # Build the complete parameter dict for _load_completion_page
+        return {
+            "success": bool(result_dict.get("success", False)),
+            "task": str(task),
+            "duration_ms": float(result_dict.get("execution_time_ms", 0) or 0),
+            "iterations": int(result_dict.get("total_iterations", 0) or 0),
+            "result_data": result_dict.get("result"),
+            "error_message": result_dict.get("error"),
+            "max_iterations": result_dict.get("max_iterations"),
+            "llm_usage": llm_usage,
+            "tools_used": tools_used,  # Always a list (may be empty)
+            "reasoning_steps": reasoning_steps,  # Always a list (may be empty)
+            "metadata": metadata,
+            "error_traceback": result_dict.get("error_traceback"),
+        }
 
     def _ensure_started(self) -> None:
         """Ensure FlyBrowser has been started."""
