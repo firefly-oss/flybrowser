@@ -81,6 +81,8 @@ async def try_text_contains(page: Page, text: str, timeout: float = 2.0) -> bool
     """
     Try to click element containing specific text (language-agnostic).
     
+    Uses multiple Playwright locator strategies for maximum reliability.
+    
     Args:
         page: Playwright page
         text: Text to search for (e.g., "Accept", "Aceptar", "Accepter")
@@ -90,12 +92,54 @@ async def try_text_contains(page: Page, text: str, timeout: float = 2.0) -> bool
         True if successful, False otherwise
     """
     try:
-        logger.debug(f"[Strategy:Text] Attempting to find text: {text}")
-        # Try multiple element types that typically contain dismiss buttons
+        logger.debug(f"[Strategy:Text] Attempting to find text: '{text}'")
+        
+        # Method 1: Use Playwright's get_by_role with name (MOST RELIABLE for buttons)
+        try:
+            button = page.get_by_role("button", name=text)
+            if await button.count() > 0:
+                logger.debug(f"[Strategy:Text] Found button with role API: '{text}'")
+                await button.first.click(timeout=timeout * 1000)
+                await page.wait_for_timeout(1500)
+                logger.info(f" [Strategy:Text] Successfully clicked button: '{text}'")
+                return True
+        except Exception as e:
+            logger.debug(f"[Strategy:Text] get_by_role failed: {e}")
+        
+        # Method 2: Use Playwright's get_by_text (exact match first, then partial)
+        try:
+            # Try exact match first
+            element = page.get_by_text(text, exact=True)
+            if await element.count() > 0:
+                logger.debug(f"[Strategy:Text] Found exact text match: '{text}'")
+                await element.first.click(timeout=timeout * 1000)
+                await page.wait_for_timeout(1500)
+                logger.info(f" [Strategy:Text] Successfully clicked exact text: '{text}'")
+                return True
+        except Exception as e:
+            logger.debug(f"[Strategy:Text] get_by_text exact failed: {e}")
+        
+        try:
+            # Try partial match
+            element = page.get_by_text(text, exact=False)
+            if await element.count() > 0:
+                # Get the first visible one
+                for i in range(min(3, await element.count())):
+                    el = element.nth(i)
+                    if await el.is_visible():
+                        logger.debug(f"[Strategy:Text] Found partial text match: '{text}'")
+                        await el.click(timeout=timeout * 1000)
+                        await page.wait_for_timeout(1500)
+                        logger.info(f" [Strategy:Text] Successfully clicked partial text: '{text}'")
+                        return True
+        except Exception as e:
+            logger.debug(f"[Strategy:Text] get_by_text partial failed: {e}")
+        
+        # Method 3: Traditional selector-based approach (fallback)
         selectors = [
             f"button:has-text('{text}')",
-            f"a:has-text('{text}')",
             f"div[role='button']:has-text('{text}')",
+            f"a:has-text('{text}')",
             f"span:has-text('{text}')",
         ]
         
@@ -104,10 +148,13 @@ async def try_text_contains(page: Page, text: str, timeout: float = 2.0) -> bool
                 element = await page.wait_for_selector(selector, state="visible", timeout=timeout * 1000)
                 if element:
                     await element.click()
-                    await page.wait_for_timeout(800)  # Wait for dismissal animation
-                    logger.info(f" [Strategy:Text] Successfully clicked element with text: {text}")
+                    await page.wait_for_timeout(1500)
+                    logger.info(f" [Strategy:Text] Successfully clicked via selector: {selector}")
                     return True
             except PlaywrightTimeout:
+                continue
+            except Exception as e:
+                logger.debug(f"[Strategy:Text] Selector '{selector}' failed: {e}")
                 continue
                 
     except Exception as e:
@@ -119,6 +166,9 @@ async def try_coordinates(page: Page, x: int, y: int, timeout: float = 2.0) -> b
     """
     Try to click at specific screen coordinates (useful for VLM-detected buttons).
     
+    This strategy clicks at coordinates but DOES NOT verify success.
+    Verification is handled by the ObstacleDetector using VLM analysis.
+    
     Args:
         page: Playwright page
         x: X coordinate
@@ -126,36 +176,47 @@ async def try_coordinates(page: Page, x: int, y: int, timeout: float = 2.0) -> b
         timeout: Max wait time in seconds
         
     Returns:
-        True if successful (modal disappeared), False otherwise
+        True if click was performed, False if click failed
     """
     try:
         logger.debug(f"[Strategy:Coords] Attempting click at ({x}, {y})")
         
-        # Check for modal/overlay presence before clicking
-        modal_selectors = [
-            '.modal.show', '.modal-dialog', '.modal-content',
-            '[role="dialog"]', '[class*="cookie"]', '[class*="consent"]'
-        ]
-        had_modal = False
-        for selector in modal_selectors:
-            try:
-                element = await page.query_selector(selector)
-                if element and await element.is_visible():
-                    had_modal = True
-                    break
-            except:
-                pass
+        # Get element at coordinates to log what we're clicking
+        element_info = await page.evaluate(f"""
+            () => {{
+                const element = document.elementFromPoint({x}, {y});
+                if (!element) return null;
+                return {{
+                    tagName: element.tagName,
+                    text: (element.innerText || element.textContent || '').slice(0, 100).trim(),
+                    isButton: element.tagName === 'BUTTON' || element.getAttribute('role') === 'button',
+                    isClickable: element.tagName === 'BUTTON' || element.tagName === 'A' || 
+                                 element.getAttribute('role') === 'button' || 
+                                 window.getComputedStyle(element).cursor === 'pointer'
+                }};
+            }}
+        """)
         
-        # Perform the click (try multiple approaches)
+        if element_info:
+            element_text = element_info.get('text', '')[:50]
+            is_clickable = element_info.get('isClickable', False)
+            logger.debug(f"[Strategy:Coords] Element at ({x}, {y}): {element_info.get('tagName')} '{element_text}' (clickable: {is_clickable})")
+            
+            # Warn if we're not clicking something that looks clickable
+            if not is_clickable:
+                logger.warning(f"[Strategy:Coords] Element at ({x}, {y}) may not be clickable")
+        else:
+            logger.warning(f"[Strategy:Coords] No element found at ({x}, {y}) - coordinates may be wrong")
+            return False  # Don't even try if no element there
+        
+        # Perform the click
         try:
-            # First try: Direct mouse click at coordinates
-            logger.debug(f"[Strategy:Coords] Trying direct mouse click...")
             await page.mouse.click(x, y)
+            logger.debug(f"[Strategy:Coords] Mouse click performed at ({x}, {y})")
         except Exception as e:
-            logger.warning(f"[Strategy:Coords] Direct click failed: {e}, trying element click...")
-            # Fallback: Find element at coordinates and click it
+            logger.warning(f"[Strategy:Coords] Mouse click failed: {e}, trying JS click...")
             try:
-                element = await page.evaluate(f"""
+                clicked = await page.evaluate(f"""
                     () => {{
                         const element = document.elementFromPoint({x}, {y});
                         if (element) {{
@@ -165,28 +226,21 @@ async def try_coordinates(page: Page, x: int, y: int, timeout: float = 2.0) -> b
                         return false;
                     }}
                 """)
-                if not element:
-                    logger.warning(f"[Strategy:Coords] No clickable element at ({x}, {y})")
+                if not clicked:
+                    logger.warning(f"[Strategy:Coords] JS click failed - no element at coordinates")
                     return False
             except Exception as e2:
-                logger.warning(f"[Strategy:Coords] Element click also failed: {e2}")
+                logger.warning(f"[Strategy:Coords] All click methods failed: {e2}")
                 return False
         
-        await page.wait_for_timeout(800)  # Wait longer for modal animation
+        # Wait for any animations/transitions
+        await page.wait_for_timeout(1500)
         
-        # Verify modal is gone
-        if had_modal:
-            for selector in modal_selectors:
-                try:
-                    element = await page.query_selector(selector)
-                    if element and await element.is_visible():
-                        logger.warning(f"[Strategy:Coords] Clicked but modal still visible: {selector}")
-                        return False
-                except:
-                    pass
-        
-        logger.info(f" [Strategy:Coords] Successfully dismissed modal at ({x}, {y})")
-        return True
+        # We performed the click - actual verification will be done by ObstacleDetector
+        # using VLM to check if the obstacle is gone (no hardcoded selectors!)
+        logger.info(f"[Strategy:Coords] Click performed at ({x}, {y}) on '{element_info.get('text', '')[:30]}' - verification pending")
+        return True  # Click was performed, verification happens at higher level
+            
     except Exception as e:
         logger.debug(f"[Strategy:Coords] Failed: {e}")
     return False
