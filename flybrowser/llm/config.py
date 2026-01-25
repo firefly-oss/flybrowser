@@ -28,6 +28,8 @@ class LLMProviderType(str, Enum):
     OLLAMA = "ollama"
     GEMINI = "gemini"
     GOOGLE = "google"  # Alias for gemini
+    QWEN = "qwen"
+    DASHSCOPE = "dashscope"  # Alias for qwen
     LM_STUDIO = "lm_studio"
     LOCAL_AI = "localai"
     VLLM = "vllm"
@@ -144,6 +146,14 @@ DEFAULT_CONFIGS = {
     },
     LLMProviderType.GOOGLE: {
         "model": "gemini-2.0-flash",  # Alias for gemini
+        "max_tokens": 8192,
+    },
+    LLMProviderType.QWEN: {
+        "model": "qwen-plus",  # Advanced model with enhanced reasoning
+        "max_tokens": 8192,
+    },
+    LLMProviderType.DASHSCOPE: {
+        "model": "qwen-plus",  # Alias for qwen
         "max_tokens": 8192,
     },
 }

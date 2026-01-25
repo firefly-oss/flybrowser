@@ -23,6 +23,7 @@ from flybrowser.llm.config import DEFAULT_CONFIGS, LLMProviderConfig, LLMProvide
 from flybrowser.llm.gemini_provider import GeminiProvider
 from flybrowser.llm.ollama_provider import OllamaProvider
 from flybrowser.llm.openai_provider import OpenAIProvider
+from flybrowser.llm.qwen_provider import QwenProvider
 from flybrowser.llm.provider_status import ProviderStatus
 from flybrowser.utils.logger import logger
 
@@ -36,6 +37,8 @@ class LLMProviderFactory:
         "ollama": OllamaProvider,
         "gemini": GeminiProvider,
         "google": GeminiProvider,  # Alias for gemini
+        "qwen": QwenProvider,
+        "dashscope": QwenProvider,  # Alias for qwen (DashScope is Alibaba's API)
         # Additional providers can be registered dynamically
     }
 

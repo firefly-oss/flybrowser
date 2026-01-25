@@ -24,6 +24,7 @@ from flybrowser.llm.base import (
     ToolDefinition,
 )
 from flybrowser.llm.factory import LLMProviderFactory
+from flybrowser.llm.qwen_provider import QwenProvider
 
 __all__ = [
     # Base classes
@@ -33,6 +34,7 @@ __all__ = [
     "LLMProviderFactory",
     "ModelCapability",
     "ModelInfo",
+    "QwenProvider",
     "ToolCall",
     "ToolDefinition",
 ]
