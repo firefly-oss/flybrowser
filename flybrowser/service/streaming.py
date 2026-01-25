@@ -97,19 +97,29 @@ class StreamMetrics:
 
 @dataclass
 class StreamConfig:
-    """Configuration for a streaming session."""
+    """Configuration for a streaming session.
+    
+    For localhost/LAN streaming, use LOCAL_HIGH or LOCAL_4K profiles
+    with higher bitrates and PNG capture for best quality.
+    
+    Resolution presets:
+    - 720p:  1280x720  (default)
+    - 1080p: 1920x1080
+    - 1440p: 2560x1440
+    - 4K:    3840x2160
+    """
     
     protocol: StreamingProtocol = StreamingProtocol.HLS
-    quality_profile: QualityProfile = QualityProfile.MEDIUM
+    quality_profile: QualityProfile = QualityProfile.HIGH  # Default to HIGH for better quality
     codec: VideoCodec = VideoCodec.H264
-    width: int = 1280
-    height: int = 720
-    frame_rate: int = 25
+    width: int = 1920   # 1080p default for modern displays
+    height: int = 1080
+    frame_rate: int = 30
     enable_hw_accel: bool = True
     
-    # HLS/DASH specific
-    segment_duration: int = 2  # seconds
-    playlist_size: int = 10  # number of segments
+    # HLS/DASH specific - shorter segments for lower latency
+    segment_duration: int = 1  # 1 second for lower latency (was 2)
+    playlist_size: int = 4     # smaller for lower latency (was 6)
     
     # RTMP specific
     rtmp_url: Optional[str] = None
@@ -128,6 +138,9 @@ class StreamConfig:
             QualityProfile.HIGH,
         ]
     )
+    
+    # Logging control
+    verbose_logging: bool = False  # Enable verbose logging for debugging
 
 
 @dataclass
@@ -148,6 +161,7 @@ class StreamInfo:
     dash_url: Optional[str] = None
     rtmp_url: Optional[str] = None
     websocket_url: Optional[str] = None
+    player_url: Optional[str] = None  # Embedded web player URL
     
     # Configuration
     config: StreamConfig = field(default_factory=StreamConfig)
@@ -157,7 +171,10 @@ class StreamInfo:
     
     # Viewers
     viewer_ids: Set[str] = field(default_factory=set)
-    
+
+    # Recovery metrics from recorder
+    recovery_metrics: Dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -173,9 +190,11 @@ class StreamInfo:
             "dash_url": self.dash_url,
             "rtmp_url": self.rtmp_url,
             "websocket_url": self.websocket_url,
+            "player_url": self.player_url,
             "metrics": self.metrics.to_dict(),
             "viewer_count": len(self.viewer_ids),
             "uptime_seconds": time.time() - self.started_at if self.state == StreamState.ACTIVE else 0,
+            "recovery_metrics": self.recovery_metrics,
         }
 
 
@@ -224,15 +243,36 @@ class StreamingSession:
         # FFmpeg recorder
         self._recorder: Optional[FFmpegRecorder] = None
         self._page: Optional[Page] = None
-        
+
         # Monitoring
         self._metrics_task: Optional[asyncio.Task] = None
         self._health_task: Optional[asyncio.Task] = None
-        
+
         # Viewer tracking
         self._viewer_connections: Dict[str, asyncio.Queue] = {}
-        
-        logger.info(f"StreamingSession created: {self.info.stream_id}")
+
+        # Logging control
+        self._verbose = config.verbose_logging
+
+        # Recovery infrastructure
+        self._stopping = False  # Flag to prevent recovery during shutdown
+        self._recovery_attempts = 0
+        self._max_recovery_attempts = 5
+        self._last_recovery_time = 0.0
+        self._recovery_backoff = 1.0  # Initial backoff in seconds
+        self._max_recovery_backoff = 60.0  # Maximum backoff
+        self._recovery_task: Optional[asyncio.Task] = None
+        self._recovery_lock = asyncio.Lock()  # Prevent concurrent recovery attempts
+        self._consecutive_failures = 0
+        self._last_successful_frame_time = 0.0
+
+        # Graceful degradation tracking
+        self._degraded_since: float = 0.0  # Time when degraded state started
+        self._total_degraded_time: float = 0.0  # Cumulative time in degraded state
+        self._degradation_count: int = 0  # Number of degradation events
+
+        if self._verbose:
+            logger.info(f"StreamingSession created: {self.info.stream_id}")
     
     async def start(self, page: Page) -> StreamInfo:
         """Start the stream.
@@ -246,69 +286,287 @@ class StreamingSession:
         self._page = page
         self.info.state = StreamState.INITIALIZING
         
+        # Log stream initialization details
+        logger.info(
+            f"[STREAM] Initializing stream {self.info.stream_id}\n"
+            f"  Session: {self.session_id}\n"
+            f"  Protocol: {self.config.protocol.value}\n"
+            f"  Quality: {self.config.quality_profile.value}\n"
+            f"  Resolution: {self.config.width}x{self.config.height}\n"
+            f"  Frame Rate: {self.config.frame_rate} fps\n"
+            f"  Output Dir: {self.stream_dir}"
+        )
+        
         try:
             # Build FFmpeg configuration
+            logger.info(f"[STREAM] Building FFmpeg configuration...")
             ffmpeg_config = self._build_ffmpeg_config()
+            logger.info(
+                f"[STREAM] FFmpeg config ready:\n"
+                f"  Codec: {ffmpeg_config.codec.value}\n"
+                f"  CRF: {ffmpeg_config.crf}\n"
+                f"  Preset: {ffmpeg_config.preset}\n"
+                f"  Output: {ffmpeg_config.output_path}"
+            )
             
             # Create recorder
+            logger.info(f"[STREAM] Creating FFmpegRecorder...")
             self._recorder = FFmpegRecorder(ffmpeg_config)
             
             # Start recording/streaming
+            logger.info(f"[STREAM] Starting capture (page: {page})...")
             await self._recorder.start(page)
+            logger.info(f"[STREAM] Capture started successfully")
             
             # Update stream info
-            self.info.state = StreamState.ACTIVE
             self._set_stream_urls()
+            logger.info(
+                f"[STREAM] URLs configured:\n"
+                f"  HLS: {self.info.hls_url}\n"
+                f"  Player: {self.info.player_url}"
+            )
+            
+            # Wait for first HLS segment to be created before declaring stream active
+            if self.config.protocol == StreamingProtocol.HLS:
+                logger.info(f"[STREAM] Waiting for first HLS segment...")
+                segment_ready = await self._wait_for_first_segment()
+                if segment_ready:
+                    logger.info(f"[STREAM] First HLS segment ready - stream is live!")
+                else:
+                    logger.warning(f"[STREAM] First segment timeout - stream may have issues")
+            
+            self.info.state = StreamState.ACTIVE
             
             # Start monitoring tasks
             self._metrics_task = asyncio.create_task(self._monitor_metrics())
             self._health_task = asyncio.create_task(self._monitor_health())
             
-            logger.info(f"Stream started: {self.info.stream_id}")
+            logger.info(
+                f"[STREAM] Stream ACTIVE: {self.info.stream_id}\n"
+                f"  Play URL: {self.info.player_url or self.info.hls_url}"
+            )
             return self.info
             
         except Exception as e:
             self.info.state = StreamState.ERROR
             self.info.health = StreamHealth.UNHEALTHY
-            logger.error(f"Failed to start stream: {e}")
+            logger.error(f"[STREAM] Failed to start stream: {e}")
+            import traceback
+            logger.error(f"[STREAM] Traceback: {traceback.format_exc()}")
             raise
+    
+    async def _wait_for_first_segment(self, timeout: float = 10.0) -> bool:
+        """Wait for the first HLS segment to be created.
+        
+        Args:
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            True if segment was found, False if timeout
+        """
+        playlist_path = self.stream_dir / "playlist.m3u8"
+        start_time = time.time()
+        check_interval = 0.1  # Check every 100ms
+        
+        while time.time() - start_time < timeout:
+            # Check if playlist exists and has at least one segment reference
+            if playlist_path.exists():
+                try:
+                    content = playlist_path.read_text()
+                    # Look for .ts segment in playlist
+                    if ".ts" in content and "#EXTINF" in content:
+                        # Also verify at least one segment file exists
+                        for line in content.split("\n"):
+                            if line.endswith(".ts"):
+                                segment_path = self.stream_dir / line.strip()
+                                if segment_path.exists():
+                                    if self._verbose:
+                                        logger.debug(f"First segment ready: {line.strip()}")
+                                    return True
+                except Exception:
+                    pass
+            
+            await asyncio.sleep(check_interval)
+        
+        logger.warning(f"Timeout waiting for first HLS segment after {timeout}s")
+        return False
     
     async def stop(self) -> StreamInfo:
         """Stop the stream.
-        
+
         Returns:
             Final StreamInfo with metrics
         """
         if self.info.state == StreamState.STOPPED:
             return self.info
-        
+
+        # Set stopping flag to prevent recovery attempts during shutdown
+        self._stopping = True
         self.info.state = StreamState.STOPPED
         self.info.ended_at = time.time()
-        
+
+        # Cancel recovery task if running
+        if self._recovery_task and not self._recovery_task.done():
+            self._recovery_task.cancel()
+            try:
+                await self._recovery_task
+            except asyncio.CancelledError:
+                pass
+
         # Stop monitoring tasks
         if self._metrics_task:
             self._metrics_task.cancel()
+            try:
+                await self._metrics_task
+            except asyncio.CancelledError:
+                pass
         if self._health_task:
             self._health_task.cancel()
-        
-        # Stop recorder
+            try:
+                await self._health_task
+            except asyncio.CancelledError:
+                pass
+
+        # Stop recorder with robust error handling
         if self._recorder:
             try:
                 await self._recorder.stop()
             except Exception as e:
                 logger.error(f"Error stopping recorder: {e}")
-        
+                import traceback
+                logger.debug(f"Recorder stop traceback: {traceback.format_exc()}")
+
         # Notify viewers
-        await self._notify_viewers_stream_ended()
-        
-        logger.info(f"Stream stopped: {self.info.stream_id}")
+        try:
+            await self._notify_viewers_stream_ended()
+        except Exception as e:
+            logger.debug(f"Error notifying viewers: {e}")
+
+        # Log final stats with recovery info
+        uptime = self.info.ended_at - self.info.started_at
+        logger.info(
+            f"Stream stopped: {self.info.stream_id} "
+            f"(uptime: {uptime:.1f}s, frames: {self.info.metrics.frames_sent}, "
+            f"viewers: {len(self.info.viewer_ids)}, "
+            f"recovery_attempts: {self._recovery_attempts})"
+        )
         return self.info
+
+    async def _attempt_recovery(self) -> bool:
+        """Attempt to recover the stream after a failure.
+
+        Returns:
+            True if recovery was successful, False otherwise
+        """
+        # Don't attempt recovery if we're stopping
+        if self._stopping:
+            logger.debug(f"Skipping recovery - stream is stopping")
+            return False
+
+        # Use lock to prevent concurrent recovery attempts
+        async with self._recovery_lock:
+            # Double-check after acquiring lock
+            if self._stopping or self.info.state == StreamState.STOPPED:
+                return False
+
+            # Check if we've exceeded max recovery attempts
+            if self._recovery_attempts >= self._max_recovery_attempts:
+                logger.error(
+                    f"[STREAM] Max recovery attempts ({self._max_recovery_attempts}) exceeded "
+                    f"for stream {self.info.stream_id} - giving up"
+                )
+                self.info.state = StreamState.ERROR
+                self.info.health = StreamHealth.UNHEALTHY
+                return False
+
+            # Apply exponential backoff
+            current_time = time.time()
+            time_since_last = current_time - self._last_recovery_time
+            if time_since_last < self._recovery_backoff:
+                wait_time = self._recovery_backoff - time_since_last
+                logger.info(f"[STREAM] Waiting {wait_time:.1f}s before recovery attempt...")
+                await asyncio.sleep(wait_time)
+
+            self._recovery_attempts += 1
+            self._last_recovery_time = time.time()
+
+            logger.info(
+                f"[STREAM] Recovery attempt {self._recovery_attempts}/{self._max_recovery_attempts} "
+                f"for stream {self.info.stream_id}"
+            )
+
+            try:
+                # Stop current recorder if it exists
+                if self._recorder:
+                    try:
+                        await self._recorder.stop()
+                    except Exception as e:
+                        logger.debug(f"Error stopping recorder during recovery: {e}")
+
+                # Check if we still have a valid page
+                if not self._page:
+                    logger.error("[STREAM] Cannot recover - no page reference")
+                    return False
+
+                # Check if page is still connected
+                try:
+                    # Try to access page to see if it's still valid
+                    if self._page.is_closed():
+                        logger.error("[STREAM] Cannot recover - page is closed")
+                        return False
+                except Exception as e:
+                    logger.error(f"[STREAM] Cannot recover - page check failed: {e}")
+                    return False
+
+                # Rebuild FFmpeg config and create new recorder
+                logger.info(f"[STREAM] Recreating FFmpeg recorder...")
+                ffmpeg_config = self._build_ffmpeg_config()
+                self._recorder = FFmpegRecorder(ffmpeg_config)
+
+                # Start recording again
+                await self._recorder.start(self._page)
+
+                # Wait briefly to confirm it's working
+                await asyncio.sleep(1.0)
+
+                if self._recorder.is_recording:
+                    logger.info(
+                        f"[STREAM] Recovery successful for stream {self.info.stream_id} "
+                        f"(attempt {self._recovery_attempts})"
+                    )
+                    self.info.state = StreamState.ACTIVE
+                    self.info.health = StreamHealth.HEALTHY
+                    self._consecutive_failures = 0
+                    self._last_successful_frame_time = time.time()
+
+                    # Increase backoff for next attempt (exponential)
+                    self._recovery_backoff = min(
+                        self._recovery_backoff * 2,
+                        self._max_recovery_backoff
+                    )
+                    return True
+                else:
+                    logger.warning(f"[STREAM] Recovery failed - recorder not recording")
+                    return False
+
+            except Exception as e:
+                logger.error(f"[STREAM] Recovery failed with error: {e}")
+                import traceback
+                logger.debug(f"Recovery traceback: {traceback.format_exc()}")
+
+                # Increase backoff for next attempt
+                self._recovery_backoff = min(
+                    self._recovery_backoff * 2,
+                    self._max_recovery_backoff
+                )
+                return False
     
     async def pause(self) -> bool:
         """Pause the stream."""
         if self.info.state == StreamState.ACTIVE:
             self.info.state = StreamState.PAUSED
-            logger.info(f"Stream paused: {self.info.stream_id}")
+            if self._verbose:
+                logger.info(f"Stream paused: {self.info.stream_id}")
             return True
         return False
     
@@ -316,7 +574,8 @@ class StreamingSession:
         """Resume the stream."""
         if self.info.state == StreamState.PAUSED:
             self.info.state = StreamState.ACTIVE
-            logger.info(f"Stream resumed: {self.info.stream_id}")
+            if self._verbose:
+                logger.info(f"Stream resumed: {self.info.stream_id}")
             return True
         return False
     
@@ -330,17 +589,19 @@ class StreamingSession:
             True if viewer was added
         """
         if len(self.info.viewer_ids) >= self.config.max_viewers:
-            logger.warning(f"Stream at max viewers: {self.info.stream_id}")
+            if self._verbose:
+                logger.warning(f"Stream at max viewers: {self.info.stream_id}")
             return False
         
         self.info.viewer_ids.add(viewer_id)
         self.info.metrics.viewer_count = len(self.info.viewer_ids)
         
         # Create queue for viewer if WebSocket
-        if self.config.protocol == StreamingProtocol.HLS:  # WebSocket would need separate handling
+        if self.config.protocol == StreamingProtocol.HLS:
             self._viewer_connections[viewer_id] = asyncio.Queue()
         
-        logger.info(f"Viewer {viewer_id} joined stream {self.info.stream_id}")
+        if self._verbose:
+            logger.debug(f"Viewer {viewer_id[:8]}... joined stream {self.info.stream_id[:8]}...")
         return True
     
     async def remove_viewer(self, viewer_id: str) -> bool:
@@ -359,7 +620,8 @@ class StreamingSession:
             if viewer_id in self._viewer_connections:
                 del self._viewer_connections[viewer_id]
             
-            logger.info(f"Viewer {viewer_id} left stream {self.info.stream_id}")
+            if self._verbose:
+                logger.debug(f"Viewer {viewer_id[:8]}... left stream {self.info.stream_id[:8]}...")
             return True
         return False
     
@@ -388,6 +650,7 @@ class StreamingSession:
             height=self.config.height,
             frame_rate=self.config.frame_rate,
             enable_hw_accel=self.config.enable_hw_accel,
+            verbose_logging=self.config.verbose_logging,
         )
     
     def _set_stream_urls(self) -> None:
@@ -404,16 +667,19 @@ class StreamingSession:
         
         # WebSocket URL (for live updates)
         self.info.websocket_url = f"ws://{base.replace('http://', '')}{stream_path}/ws"
+        
+        # Embedded web player URL (for HLS and DASH only)
+        if self.config.protocol in [StreamingProtocol.HLS, StreamingProtocol.DASH]:
+            self.info.player_url = f"{base}{stream_path}/player"
     
     async def _monitor_metrics(self) -> None:
-        """Monitor stream metrics."""
+        """Monitor stream metrics silently."""
         last_check = time.time()
         last_frames = 0
-        last_bytes = 0
         
         try:
             while self.info.state == StreamState.ACTIVE:
-                await asyncio.sleep(2)  # Update every 2 seconds
+                await asyncio.sleep(3)  # Update every 3 seconds (reduced frequency)
                 
                 if not self._recorder:
                     continue
@@ -427,61 +693,269 @@ class StreamingSession:
                     # Calculate rates
                     frame_delta = metadata.total_frames - last_frames
                     self.info.metrics.current_fps = frame_delta / elapsed
-                    
+
                     # Update metrics
                     self.info.metrics.frames_sent = metadata.total_frames
                     self.info.metrics.last_update = current_time
-                    
+
+                    # Update dropped frames and buffer health from recorder
+                    self.info.metrics.dropped_frames = self._recorder.dropped_frames
+                    self.info.metrics.buffer_health = self._recorder.buffer_health_percent
+
+                    # Calculate bytes_sent from segment files (HLS .ts files)
+                    try:
+                        total_bytes = sum(
+                            f.stat().st_size
+                            for f in self.stream_dir.glob("*.ts")
+                            if f.is_file()
+                        )
+                        self.info.metrics.bytes_sent = total_bytes
+                    except Exception:
+                        pass  # Ignore errors in bytes calculation
+
+                    # Update recovery metrics from recorder
+                    self.info.recovery_metrics = self._recorder.get_recovery_metrics()
+
                     # Update averages
                     total_time = current_time - self.info.started_at
                     if total_time > 0:
                         self.info.metrics.average_bitrate = (
                             self.info.metrics.bytes_sent * 8 / total_time
                         )
-                    
+
                     last_check = current_time
                     last_frames = metadata.total_frames
                 
         except asyncio.CancelledError:
-            logger.info(f"Metrics monitoring stopped for stream {self.info.stream_id}")
+            pass  # Clean exit
     
     async def _monitor_health(self) -> None:
-        """Monitor stream health."""
+        """Monitor stream health with automatic recovery on failures."""
+        warmup_period = 15.0  # Longer warmup to avoid false positives
+        start_time = time.time()
+        last_health_log = 0.0
+        last_stats_log = 0.0  # For comprehensive periodic stats logging
+        stats_log_interval = 60.0  # Log comprehensive stats every 60 seconds
+        recovery_in_progress = False
+
+        # HLS segment stall detection
+        last_segment_mtime: float = 0.0
+        segment_stall_threshold = 30.0  # Seconds without new segment = stall
+
         try:
             while self.info.state == StreamState.ACTIVE:
-                await asyncio.sleep(5)  # Check every 5 seconds
-                
+                await asyncio.sleep(10)  # Check every 10 seconds (reduced frequency)
+
+                # Don't perform health checks during shutdown
+                if self._stopping:
+                    break
+
+                prev_health = self.info.health
+
+                # Check if recovery task completed
+                if self._recovery_task is not None and self._recovery_task.done():
+                    try:
+                        recovery_success = self._recovery_task.result()
+                        recovery_in_progress = False
+                        if recovery_success:
+                            logger.info(f"Stream {self.info.stream_id}: Recovery completed successfully")
+                            self._consecutive_failures = 0
+                            self._last_successful_frame_time = time.time()
+                            # Reset warmup after recovery
+                            start_time = time.time()
+                        else:
+                            self._consecutive_failures += 1
+                            logger.warning(
+                                f"Stream {self.info.stream_id}: Recovery failed "
+                                f"(consecutive failures: {self._consecutive_failures})"
+                            )
+                    except Exception as e:
+                        recovery_in_progress = False
+                        self._consecutive_failures += 1
+                        logger.error(f"Stream {self.info.stream_id}: Recovery task error: {e}")
+                    finally:
+                        self._recovery_task = None
+
                 # Check if recording is still active
                 if self._recorder and not self._recorder.is_recording:
                     self.info.health = StreamHealth.UNHEALTHY
-                    logger.warning(f"Stream unhealthy: recorder not active {self.info.stream_id}")
+
+                    if prev_health != StreamHealth.UNHEALTHY:
+                        logger.warning(f"Stream {self.info.stream_id}: Recorder stopped unexpectedly")
+
+                    # Trigger recovery if not already in progress and not stopping
+                    if not recovery_in_progress and not self._stopping:
+                        if self._recovery_attempts < self._max_recovery_attempts:
+                            logger.info(
+                                f"Stream {self.info.stream_id}: Initiating automatic recovery "
+                                f"(attempt {self._recovery_attempts + 1}/{self._max_recovery_attempts})"
+                            )
+                            recovery_in_progress = True
+                            self._recovery_task = asyncio.create_task(self._attempt_recovery())
+                        else:
+                            logger.error(
+                                f"Stream {self.info.stream_id}: Max recovery attempts "
+                                f"({self._max_recovery_attempts}) exceeded, stopping stream"
+                            )
+                            # Stop the stream - max recovery attempts exceeded
+                            self.info.state = StreamState.ERROR
+                            break
                     continue
-                
-                # Check FPS
-                if self.info.metrics.current_fps < self.config.frame_rate * 0.5:
-                    self.info.health = StreamHealth.DEGRADED
-                    logger.warning(f"Stream degraded: low FPS {self.info.stream_id}")
+
+                # Update last successful frame time when recorder is active
+                if self._recorder and self._recorder.is_recording:
+                    self._last_successful_frame_time = time.time()
+
+                # Skip checks during warmup period
+                elapsed = time.time() - start_time
+                if elapsed < warmup_period:
+                    self.info.health = StreamHealth.HEALTHY
                     continue
-                
+
+                # Check FPS (only if we have enough frames)
+                if self.info.metrics.frames_sent > 60:  # ~2 seconds of frames
+                    min_fps = self.config.frame_rate * 0.2  # 20% threshold (more lenient)
+                    if self.info.metrics.current_fps < min_fps:
+                        self.info.health = StreamHealth.DEGRADED
+                        # Enter degraded mode on recorder to skip frames
+                        if self._recorder and not self._recorder.is_degraded:
+                            self._recorder.enter_degraded_mode(skip_frames=3)
+                            self._degraded_since = time.time()
+                            self._degradation_count += 1
+                        # Only log health changes, not every check
+                        current_time = time.time()
+                        if self._verbose and current_time - last_health_log > 30:
+                            logger.debug(
+                                f"Stream {self.info.stream_id}: Degraded FPS "
+                                f"{self.info.metrics.current_fps:.1f} (min: {min_fps:.1f})"
+                            )
+                            last_health_log = current_time
+                        continue
+
                 # Check buffer health
-                if self.info.metrics.buffer_health < 50:
+                if self.info.metrics.buffer_health < 30:  # More lenient threshold
                     self.info.health = StreamHealth.DEGRADED
-                    logger.warning(f"Stream degraded: low buffer {self.info.stream_id}")
+                    # Enter degraded mode on recorder with more aggressive frame skipping
+                    if self._recorder and not self._recorder.is_degraded:
+                        self._recorder.enter_degraded_mode(skip_frames=5)
+                        self._degraded_since = time.time()
+                        self._degradation_count += 1
                     continue
-                
+
+                # HLS segment stall detection
+                if self.config.protocol == StreamingProtocol.HLS:
+                    try:
+                        # Find latest segment file modification time
+                        segment_files = list(self.stream_dir.glob("*.ts"))
+                        if segment_files:
+                            current_latest_mtime = max(
+                                f.stat().st_mtime for f in segment_files
+                            )
+                            if last_segment_mtime == 0.0:
+                                # First check, initialize
+                                last_segment_mtime = current_latest_mtime
+                            elif current_latest_mtime > last_segment_mtime:
+                                # New segment created, update tracker
+                                last_segment_mtime = current_latest_mtime
+                            elif (current_time - last_segment_mtime) > segment_stall_threshold:
+                                # No new segments for too long - stall detected
+                                logger.warning(
+                                    f"Stream {self.info.stream_id}: HLS segment stall detected - "
+                                    f"no new segments for {current_time - last_segment_mtime:.1f}s"
+                                )
+                                self.info.health = StreamHealth.UNHEALTHY
+                                self._consecutive_failures += 1
+                                if self._consecutive_failures >= 2:
+                                    logger.info(
+                                        f"Stream {self.info.stream_id}: Triggering recovery "
+                                        f"due to HLS segment stall"
+                                    )
+                                    asyncio.create_task(self._attempt_recovery())
+                                continue
+                    except Exception as e:
+                        logger.debug(
+                            f"Stream {self.info.stream_id}: Error checking HLS segments: {e}"
+                        )
+
                 # All checks passed
                 self.info.health = StreamHealth.HEALTHY
-                
+                self._consecutive_failures = 0  # Reset on healthy state
+
+                # Exit degraded mode if active
+                if self._recorder and self._recorder.is_degraded:
+                    self._recorder.exit_degraded_mode()
+                    if self._degraded_since > 0:
+                        self._total_degraded_time += time.time() - self._degraded_since
+                        self._degraded_since = 0.0
+                        logger.info(
+                            f"Stream {self.info.stream_id}: Exited degraded mode, "
+                            f"total degraded time: {self._total_degraded_time:.1f}s"
+                        )
+
+                # Reset recovery backoff after 5 minutes of sustained healthy operation
+                if (self._recovery_attempts > 0 and
+                    time.time() - self._last_recovery_time > 300):  # 5 minutes
+                    logger.info(
+                        f"Stream {self.info.stream_id}: Resetting recovery counters after "
+                        f"5 minutes of stable operation"
+                    )
+                    self._recovery_attempts = 0
+                    self._recovery_backoff = 1.0
+
+                # Comprehensive periodic stats logging
+                current_time = time.time()
+                if current_time - last_stats_log >= stats_log_interval:
+                    last_stats_log = current_time
+                    uptime = current_time - self.info.started_at
+
+                    # Get recorder metrics if available
+                    recorder_metrics = {}
+                    if self._recorder:
+                        recorder_metrics = self._recorder.get_metrics()
+
+                    # Calculate failure rate
+                    total_recovery_attempts = self._recovery_attempts
+                    recovery_success_rate = 0.0
+                    if total_recovery_attempts > 0:
+                        # Successful recoveries = attempts - consecutive failures still active
+                        successful = max(0, total_recovery_attempts - self._consecutive_failures)
+                        recovery_success_rate = (successful / total_recovery_attempts) * 100
+
+                    logger.info(
+                        f"Stream {self.info.stream_id} stats: "
+                        f"uptime={uptime:.0f}s, "
+                        f"health={self.info.health.name}, "
+                        f"frames_sent={self.info.metrics.frames_sent}, "
+                        f"dropped_frames={self.info.metrics.dropped_frames}, "
+                        f"fps={self.info.metrics.current_fps:.1f}, "
+                        f"buffer_health={self.info.metrics.buffer_health:.0f}%, "
+                        f"recovery_attempts={self._recovery_attempts}, "
+                        f"recovery_success_rate={recovery_success_rate:.0f}%, "
+                        f"degradation_count={self._degradation_count}, "
+                        f"total_degraded_time={self._total_degraded_time:.1f}s, "
+                        f"ffmpeg_restarts={recorder_metrics.get('ffmpeg_restarts', 0)}"
+                    )
+
         except asyncio.CancelledError:
-            logger.info(f"Health monitoring stopped for stream {self.info.stream_id}")
+            pass  # Clean exit
+        except Exception as e:
+            logger.error(f"Stream {self.info.stream_id}: Health monitor error: {e}")
+        finally:
+            # Clean up any pending recovery task
+            if self._recovery_task is not None and not self._recovery_task.done():
+                self._recovery_task.cancel()
+                try:
+                    await self._recovery_task
+                except asyncio.CancelledError:
+                    pass
     
     async def _notify_viewers_stream_ended(self) -> None:
         """Notify all viewers that stream has ended."""
         for viewer_queue in self._viewer_connections.values():
             try:
                 await viewer_queue.put({"type": "stream_ended", "stream_id": self.info.stream_id})
-            except Exception as e:
-                logger.error(f"Failed to notify viewer: {e}")
+            except Exception:
+                pass  # Viewer may already be disconnected
     
     async def get_playlist_content(self) -> Optional[str]:
         """Get HLS playlist content.
@@ -498,9 +972,8 @@ class StreamingSession:
         
         try:
             return await asyncio.to_thread(playlist_path.read_text)
-        except Exception as e:
-            logger.error(f"Failed to read playlist: {e}")
-            return None
+        except Exception:
+            return None  # File may be being written
     
     async def get_segment(self, segment_name: str) -> Optional[bytes]:
         """Get HLS segment data.
@@ -517,9 +990,67 @@ class StreamingSession:
         
         try:
             return await asyncio.to_thread(segment_path.read_bytes)
-        except Exception as e:
-            logger.error(f"Failed to read segment: {e}")
-            return None
+        except Exception:
+            return None  # File may be being written
+
+    def get_comprehensive_metrics(self) -> Dict[str, Any]:
+        """Get comprehensive metrics including uptime, failure rates, and degradation stats.
+
+        Returns:
+            Dictionary containing all streaming metrics for monitoring and debugging.
+        """
+        import time
+        current_time = time.time()
+        uptime = current_time - self.info.started_at if self.info.started_at > 0 else 0.0
+
+        # Calculate recovery success rate
+        total_recovery_attempts = self._recovery_attempts
+        recovery_success_rate = 0.0
+        if total_recovery_attempts > 0:
+            successful = max(0, total_recovery_attempts - self._consecutive_failures)
+            recovery_success_rate = (successful / total_recovery_attempts) * 100
+
+        # Get recorder metrics if available
+        recorder_metrics = {}
+        if self._recorder:
+            recorder_metrics = self._recorder.get_metrics()
+
+        return {
+            # Basic info
+            "stream_id": self.info.stream_id,
+            "state": self.info.state.name,
+            "health": self.info.health.name,
+            "protocol": self.info.protocol.value if self.info.protocol else None,
+
+            # Uptime and timing
+            "uptime_seconds": uptime,
+            "started_at": self.info.started_at,
+
+            # Frame metrics
+            "frames_sent": self.info.metrics.frames_sent,
+            "dropped_frames": self.info.metrics.dropped_frames,
+            "bytes_sent": self.info.metrics.bytes_sent,
+            "current_fps": self.info.metrics.current_fps,
+            "buffer_health": self.info.metrics.buffer_health,
+
+            # Recovery metrics
+            "recovery_attempts": self._recovery_attempts,
+            "consecutive_failures": self._consecutive_failures,
+            "recovery_success_rate": recovery_success_rate,
+
+            # Degradation metrics
+            "is_degraded": self._degraded_since > 0,
+            "degradation_count": self._degradation_count,
+            "total_degraded_time_seconds": self._total_degraded_time,
+            "current_degraded_duration": (
+                current_time - self._degraded_since if self._degraded_since > 0 else 0.0
+            ),
+
+            # FFmpeg/recorder metrics
+            "ffmpeg_restarts": recorder_metrics.get("ffmpeg_restarts", 0),
+            "recorder_degraded": recorder_metrics.get("is_degraded", False),
+            "recorder_metrics": recorder_metrics,
+        }
 
 
 class StreamingManager:
@@ -600,8 +1131,18 @@ class StreamingManager:
         Raises:
             ValueError: If too many concurrent streams
         """
+        logger.info(
+            f"[STREAM_MGR] Creating stream for session {session_id}\n"
+            f"  Protocol: {config.protocol.value}\n"
+            f"  Quality: {config.quality_profile.value}\n"
+            f"  Resolution: {config.width}x{config.height}@{config.frame_rate}fps\n"
+            f"  Output Dir: {self.output_dir}\n"
+            f"  Base URL: {self.base_url}"
+        )
+        
         async with self._stream_lock:
             if len(self._streams) >= self.max_concurrent_streams:
+                logger.error(f"[STREAM_MGR] Max streams reached ({self.max_concurrent_streams})")
                 raise ValueError(
                     f"Maximum concurrent streams reached ({self.max_concurrent_streams})"
                 )
@@ -609,9 +1150,11 @@ class StreamingManager:
             # Check if session already has a stream
             for stream in self._streams.values():
                 if stream.session_id == session_id:
+                    logger.error(f"[STREAM_MGR] Session {session_id} already has active stream")
                     raise ValueError(f"Session {session_id} already has an active stream")
             
             # Create stream
+            logger.info(f"[STREAM_MGR] Creating StreamingSession...")
             stream = StreamingSession(
                 session_id=session_id,
                 config=config,
@@ -620,12 +1163,17 @@ class StreamingManager:
             )
             
             # Start stream
+            logger.info(f"[STREAM_MGR] Starting stream...")
             info = await stream.start(page)
             
             # Store stream
             self._streams[info.stream_id] = stream
             
-            logger.info(f"Stream created: {info.stream_id} for session {session_id}")
+            logger.info(
+                f"[STREAM_MGR] Stream created successfully: {info.stream_id}\n"
+                f"  HLS URL: {info.hls_url}\n"
+                f"  Player URL: {info.player_url}"
+            )
             return info
     
     async def stop_stream(self, stream_id: str) -> Optional[StreamInfo]:
