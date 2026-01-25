@@ -409,6 +409,12 @@ class ReActAgent:
                         outcome=ExecutionOutcome.SUCCESS if observation.success else ExecutionOutcome.FAILURE,
                     )
 
+                # Mark step as complete to calculate duration
+                step.complete(
+                    ExecutionState.COMPLETED if (step.observation and step.observation.success) 
+                    else ExecutionState.FAILED
+                )
+                
                 self._steps.append(step)
                 self._current_step = step
 
@@ -568,6 +574,12 @@ class ReActAgent:
                                 outcome=ExecutionOutcome.SUCCESS if observation.success else ExecutionOutcome.FAILURE,
                             )
 
+                        # Mark step as complete to calculate duration
+                        step.complete(
+                            ExecutionState.COMPLETED if (step.observation and step.observation.success) 
+                            else ExecutionState.FAILED
+                        )
+                        
                         self._steps.append(step)
                         self._current_step = step
 
@@ -1238,6 +1250,10 @@ class ReActAgent:
         # Check if vision should be used
         if self._should_use_vision(iteration):
             try:
+                # IMPORTANT: Check for dynamically-appearing obstacles before capturing screenshot
+                # This handles modals/popups that appear via JavaScript AFTER initial page load
+                await self._check_and_handle_dynamic_obstacles()
+                
                 # Capture screenshot
                 screenshot_bytes = await self.page.screenshot(full_page=False)
                 logger.info(f"[VISION] Captured screenshot ({len(screenshot_bytes) // 1024}KB) for iteration {iteration}")
@@ -1518,6 +1534,21 @@ class ReActAgent:
         if ModelCapability.VISION not in self.model_info.capabilities:
             return False
         
+        # Skip vision for blank pages - no useful content to capture
+        try:
+            # PageController wraps Playwright page - access underlying page.url
+            # self.page is PageController, self.page.page is Playwright Page
+            if hasattr(self.page, 'page') and hasattr(self.page.page, 'url'):
+                current_url = self.page.page.url
+            else:
+                current_url = None
+            
+            if current_url and current_url in ('about:blank', 'about:blank#', ''):
+                logger.debug(f"[VISION] Skipped: page is blank ({current_url})")
+                return False
+        except Exception:
+            pass  # If we can't check URL, continue with normal logic
+        
         # First iteration - most modes use vision to understand initial state
         if iteration == 1:
             logger.debug(f"[VISION:{self.operation_mode.value}] Trigger: first iteration")
@@ -1601,6 +1632,104 @@ class ReActAgent:
         }
         
         return last_step.action.tool_name in navigation_tools
+    
+    async def _check_and_handle_dynamic_obstacles(self) -> bool:
+        """
+        State-of-the-art dynamic obstacle detection and handling.
+        
+        This implements a professional two-phase approach to handle modals, popups,
+        and overlays that appear dynamically via JavaScript AFTER initial page load:
+        
+        Architecture:
+        ┌─────────────────────────────────────────────────────────────────┐
+        │  Phase 1: Quick DOM Analysis (~10ms, no LLM)                    │
+        │  - Multi-point sampling (5 viewport positions)                  │
+        │  - ARIA role detection (dialog, alertdialog)                    │
+        │  - Framework modal detection (Bootstrap, MUI, etc.)             │
+        │  - Confidence scoring with configurable threshold               │
+        └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼ (only if confidence > 0.3)
+        ┌─────────────────────────────────────────────────────────────────┐
+        │  Phase 2: Full VLM Analysis + Dismissal (~2-5s)                 │
+        │  - Screenshot capture and analysis                              │
+        │  - AI-driven strategy selection                                 │
+        │  - Multi-strategy dismissal with verification                   │
+        └─────────────────────────────────────────────────────────────────┘
+        
+        Features:
+        - Cooldown period (3s) after handling to prevent re-detection loops
+        - Detector instance caching per URL for performance
+        - Graceful degradation on errors (non-blocking)
+        
+        Returns:
+            True if obstacles were found and handled, False otherwise
+        """
+        try:
+            # Skip for blank/empty pages
+            # NOTE: self.page is PageController, self.page.page is Playwright Page
+            # PageController has async get_url(), but Playwright Page has sync .url property
+            if hasattr(self.page, 'page') and hasattr(self.page.page, 'url'):
+                current_url = self.page.page.url
+            else:
+                current_url = None
+            if not current_url or current_url in ('about:blank', 'about:blank#', ''):
+                return False
+            
+            # Import here to avoid circular import at module level
+            from flybrowser.agents.obstacle_detector import ObstacleDetector
+            
+            # Get or create detector instance (cached per URL domain for efficiency)
+            # This preserves cooldown state across multiple checks on same domain
+            detector_key = '_dynamic_obstacle_detector'
+            detector = getattr(self, detector_key, None)
+            
+            # Get obstacle config from agent configuration
+            obstacle_config = getattr(self.config, 'obstacle_detector', None)
+            
+            # Create new detector if needed (first time or different page)
+            if detector is None:
+                detector = ObstacleDetector(
+                    page=self.page.page,  # Get underlying Playwright page
+                    llm=self.llm,
+                    config=obstacle_config
+                )
+                setattr(self, detector_key, detector)
+            else:
+                # Update page reference in case of navigation
+                detector.page = self.page.page
+            
+            # Execute two-phase detection with intelligent throttling
+            # Phase 1: Quick multi-point DOM check (~10ms, no LLM call)
+            # Phase 2: Full VLM analysis (only if Phase 1 detects with confidence > 0.3)
+            result = await detector.detect_and_handle_if_needed(
+                cooldown_seconds=3.0,  # Prevent re-detection loop after dismissal
+                min_confidence=0.3,    # Threshold tuned for low false-positive rate
+            )
+            
+            if result is not None and result.obstacles_dismissed > 0:
+                # Successfully handled obstacles
+                obstacle_types = [obs.type for obs in result.obstacles_found]
+                logger.info(
+                    f"[DynamicObstacle] ✓ Handled {result.obstacles_dismissed}/{len(result.obstacles_found)} "
+                    f"obstacle(s) in {result.time_taken_ms:.0f}ms - types: {obstacle_types}"
+                )
+                
+                # Store in memory to prevent VLM from trying to dismiss already-gone obstacles
+                if hasattr(self, 'memory') and hasattr(self.memory, 'working'):
+                    self.memory.working.set_scratch(
+                        'last_obstacle_dismissed',
+                        f"Dynamic obstacle(s) dismissed: {obstacle_types}. Do NOT try to click dismiss/accept buttons."
+                    )
+                
+                return True
+            
+            return False
+            
+        except Exception as e:
+            # Non-critical failure - log but don't interrupt main flow
+            logger.debug(f"[DynamicObstacle] Check failed (non-critical): {type(e).__name__}: {e}")
+            return False
     
     def _extract_final_result(self) -> Any:
         """
@@ -1744,6 +1873,20 @@ class ReActAgent:
                     if current_url:
                         self.memory.working.set_scratch("current_url", current_url)
                         logger.debug(f"Stored current URL: {current_url}")
+                    
+                    # Store obstacle handling info to prevent VLM hallucination
+                    # (VLM might think cookie banners are still there after dismissal)
+                    if result.data and isinstance(result.data, dict):
+                        obstacles_detected = result.data.get("obstacles_detected", 0)
+                        obstacles_handled = result.data.get("obstacles_handled", 0)
+                        if obstacles_detected > 0 and obstacles_handled > 0:
+                            # Record that obstacles were already handled
+                            self.memory.working.set_scratch(
+                                "obstacles_already_handled", 
+                                f"Cookie banners/modals already dismissed ({obstacles_handled} handled). "
+                                f"Do NOT try to click 'Accept' or dismiss buttons - they're already gone."
+                            )
+                            logger.info(f"Stored obstacle handling info: {obstacles_handled} obstacles dismissed")
                 except Exception as e:
                     logger.debug(f"Could not store current URL: {e}")
             
@@ -1764,6 +1907,25 @@ class ReActAgent:
                 self._consecutive_failures = 0  # Reset on success
             else:
                 self._consecutive_failures += 1
+                
+                # CRITICAL: Auto-detect and handle obstacles on click failures
+                # Click failures with "intercept" often mean a modal/popup appeared
+                error_msg = (result.error or "").lower()
+                if action.tool_name == "click" and (
+                    "intercept" in error_msg or 
+                    "covered" in error_msg or
+                    "another element" in error_msg
+                ):
+                    logger.info("[AutoRecovery] Click intercepted - checking for obstacles...")
+                    try:
+                        obstacle_handled = await self._check_and_handle_dynamic_obstacles()
+                        if obstacle_handled:
+                            # Obstacle was dismissed - note this in the result
+                            result.metadata['obstacle_dismissed'] = True
+                            result.metadata['recovery_action'] = "Obstacle was blocking the click and has been dismissed. Retry the click."
+                            logger.info("[AutoRecovery] Obstacle dismissed after click failure - agent should retry")
+                    except Exception as e:
+                        logger.debug(f"[AutoRecovery] Obstacle check after click failed: {e}")
                 
                 # Intelligent failure recovery: suggest alternatives
                 if self._consecutive_failures >= 2:

@@ -93,9 +93,15 @@ system_template: |
   ## PAGE EXPLORATION & MEMORY
   
   **Automatic Processing (after navigation):**
-  - Cookie banners and popups are automatically dismissed
+  - Cookie banners and popups are AUTOMATICALLY DISMISSED by the navigation tool
+  - If you see "obstacles_already_handled" in Working Data, DO NOT try to click Accept/Close buttons
+  - The obstacle detection has already handled cookie consent - the page is ready to use
   - Page is analyzed and stored as PageMap in memory
   - PageMap contains: sections, navigation links, key elements, page summary
+  
+  **IMPORTANT: Do not try to dismiss obstacles that were already handled!**
+  If navigation result says "obstacles dismissed" or Working Data shows "obstacles_already_handled",
+  the cookie banners are GONE. Proceed with your task, don't look for Accept buttons.
   
   **CRITICAL: Use PageMap Data - Don't Re-Extract!**
   - If PageMap shows "6 sections identified" or "14 links found", that data EXISTS
@@ -116,19 +122,31 @@ system_template: |
 
   ## EXECUTION PRINCIPLES
   
-  1. **Navigate First**: If task mentions a URL, navigate immediately
-  2. **Observe Before Acting**: Use `get_page_state` or screenshots to understand the page
-  3. **Be Precise**: Use specific selectors, avoid broad actions
-  4. **Handle Failures**: If action fails, try alternative selectors or approaches
-  5. **Reveal Hidden Content**: Expand menus, tabs, accordions to see full content
-  6. **Verify Actions**: Confirm important actions succeeded before proceeding
-  7. **Complete Efficiently**: Don't over-extract; finish when goal is met
+  1. **SEARCH FIRST**: If task requires finding information ("search for", "find", "look up"):
+     - Use the `search` tool - it's the fastest way (100-300ms API search)
+     - DO NOT navigate to google.com/bing.com/duckduckgo.com manually!
+     - The `search` tool returns structured results with URLs to visit
+     - Example: search({"query": "Python tutorials"}) -> returns ranked results
+  2. **Navigate After Search**: Navigate to the URLs returned by search
+  3. **Observe Before Acting**: Use `get_page_state` or screenshots to understand the page
+  4. **Be Precise**: Use specific selectors, avoid broad actions
+  5. **Handle Failures**: If action fails, try alternative selectors or approaches
+  6. **Reveal Hidden Content**: Expand menus, tabs, accordions to see full content
+  7. **Verify Actions**: Confirm important actions succeeded before proceeding
+  8. **Complete Efficiently**: Don't over-extract; finish when goal is met
   
   ## COMMON PATTERNS
+  
+  **Web Search (PREFERRED - use this for search tasks!):**
+  - Use `search` tool for ALL web searches - it's 10x faster than browser navigation
+  - search({"query": "your search query"}) returns structured results instantly
+  - DO NOT navigate to Google/Bing/DuckDuckGo to search manually!
+  - After search, use `navigate` to visit the top result URLs
   
   **Navigation:**
   - Always wait for page load after navigation
   - Check for redirects or login walls
+  - If obstacles (cookie banners) were already dismissed, don't try to dismiss them again
   
   **Forms:**
   - Fill fields in order, verify inputs are accepted

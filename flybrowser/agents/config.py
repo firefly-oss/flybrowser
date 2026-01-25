@@ -282,6 +282,41 @@ class PageAnalysisConfig:
 
 
 @dataclass
+class SearchProviderConfig:
+    """Configuration for the search provider abstraction layer."""
+    
+    # Provider selection
+    default_provider: str = "serper"  # "serper", "google", "bing", or "auto"
+    fallback_providers: List[str] = field(default_factory=lambda: ["google", "bing"])
+    prefer_cost_effective: bool = True  # Prefer cheaper providers
+    
+    # Caching
+    cache_ttl_seconds: int = 300  # 5 minutes
+    max_cache_entries: int = 100
+    enable_caching: bool = True
+    
+    # Ranking
+    enable_ranking: bool = True
+    ranking_weights: Dict[str, float] = field(default_factory=lambda: {
+        "bm25": 0.35,  # Keyword relevance
+        "freshness": 0.20,  # Recency
+        "domain_authority": 0.15,  # Source quality
+        "position": 0.30,  # Original search engine ranking
+    })
+    
+    # Search options defaults
+    default_max_results: int = 10
+    default_safe_search: str = "moderate"  # "off", "moderate", "strict"
+    
+    # Rate limiting
+    rate_limit_rpm: int = 100  # Requests per minute
+    
+    # Failover
+    max_retries: int = 2  # Max fallback provider attempts
+    retry_on_rate_limit: bool = True
+
+
+@dataclass
 class SearchToolConfig:
     """Configuration for search tools (human-like and API)."""
     
@@ -474,6 +509,7 @@ class AgentConfig:
     page_exploration: PageExplorationConfig = field(default_factory=PageExplorationConfig)
     parallel_exploration: ParallelExplorationConfig = field(default_factory=ParallelExplorationConfig)
     search_tools: SearchToolConfig = field(default_factory=SearchToolConfig)
+    search_providers: SearchProviderConfig = field(default_factory=SearchProviderConfig)
     element_interaction: ElementInteractionConfig = field(default_factory=ElementInteractionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
@@ -588,6 +624,8 @@ class AgentConfig:
             config.page_exploration = PageExplorationConfig(**data["page_exploration"])
         if "search_tools" in data:
             config.search_tools = SearchToolConfig(**data["search_tools"])
+        if "search_providers" in data:
+            config.search_providers = SearchProviderConfig(**data["search_providers"])
         if "element_interaction" in data:
             config.element_interaction = ElementInteractionConfig(**data["element_interaction"])
         if "memory" in data:

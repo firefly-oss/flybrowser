@@ -79,10 +79,42 @@ from flybrowser.agents.tools.system import (
     AskUserTool,
 )
 
-# Search tools
+# Legacy search tools
 from flybrowser.agents.tools.search_api import SearchAPITool
 from flybrowser.agents.tools.search_human import SearchHumanTool, SearchHumanAdvancedTool
 from flybrowser.agents.tools.search_rank import SearchRankTool
+
+# New search abstraction layer
+from flybrowser.agents.tools.search import (
+    # Types
+    SearchOptions,
+    SearchType,
+    ProviderHealth,
+    ProviderStatus,
+    RankedSearchResult,
+    SearchAgentResponse,
+    ProviderCapabilities,
+    # Providers
+    BaseSearchProvider,
+    ProviderRegistry,
+    SerperProvider,
+    GoogleSearchProvider,
+    BingSearchProvider,
+    # Rankers
+    BaseRanker,
+    BM25Ranker,
+    FreshnessRanker,
+    DomainAuthorityRanker,
+    CompositeRanker,
+    # Agent
+    SearchAgent,
+    # Tool integration
+    SearchAgentTool,
+    # Intent detection
+    SearchIntent,
+    SearchIntentDetector,
+    detect_search_intent,
+)
 
 # Page exploration tools
 from flybrowser.agents.tools.page_explorer import PageExplorerTool
@@ -132,7 +164,7 @@ __all__ = [
     "FailTool",
     "WaitTool",
     "AskUserTool",
-    # Search tools
+    # Legacy search tools
     "SearchAPITool",
     "SearchHumanTool",
     "SearchHumanAdvancedTool",
@@ -141,6 +173,29 @@ __all__ = [
     "SearchResponse",
     "SearchEngine",
     "SearchProvider",
+    # New search abstraction layer
+    "SearchOptions",
+    "SearchType",
+    "ProviderHealth",
+    "ProviderStatus",
+    "RankedSearchResult",
+    "SearchAgentResponse",
+    "ProviderCapabilities",
+    "BaseSearchProvider",
+    "ProviderRegistry",
+    "SerperProvider",
+    "GoogleSearchProvider",
+    "BingSearchProvider",
+    "BaseRanker",
+    "BM25Ranker",
+    "FreshnessRanker",
+    "DomainAuthorityRanker",
+    "CompositeRanker",
+    "SearchAgent",
+    "SearchAgentTool",
+    "SearchIntent",
+    "SearchIntentDetector",
+    "detect_search_intent",
     # Page exploration tools
     "PageExplorerTool",
 ]

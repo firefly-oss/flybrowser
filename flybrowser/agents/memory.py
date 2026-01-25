@@ -480,6 +480,44 @@ class ShortTermMemory:
                         lines.append(f"   Navigated to: {result.get('url', 'N/A')}")
                     else:
                         lines.append(f"   Navigation successful")
+                # Search results - format ALL results clearly with ranking info
+                elif entry.action.tool_name == "search" and entry.observation.result:
+                    tool_result = entry.observation.result
+                    result = tool_result.data if hasattr(tool_result, 'data') else tool_result
+                    if isinstance(result, dict) and 'results' in result:
+                        query = result.get('query', 'N/A')
+                        search_results = result.get('results', [])
+                        result_count = result.get('result_count', len(search_results))
+                        ranking_applied = result.get('ranking_applied', False)
+                        
+                        lines.append(f"   Query: '{query}' - Found {result_count} results (ranking: {'applied' if ranking_applied else 'none'})")
+                        lines.append(f"   Results (sorted by relevance_score):")
+                        
+                        # Show ALL results with full URLs and ranking info
+                        for r in search_results:
+                            title = r.get('title', 'N/A')[:80]
+                            url = r.get('url', 'N/A')
+                            snippet = r.get('snippet', '')[:150]
+                            score = r.get('relevance_score', 0)
+                            position = r.get('position', 0)
+                            domain = r.get('domain', '')
+                            ranking_signals = r.get('ranking_signals', {})
+                            
+                            # Format ranking signals compactly
+                            signals_str = ', '.join([f"{k}:{v:.2f}" for k, v in ranking_signals.items()]) if ranking_signals else ''
+                            
+                            lines.append(f"   {position}. [{score:.3f}] {title}")
+                            lines.append(f"      URL: {url}")
+                            lines.append(f"      Snippet: {snippet}")
+                            if signals_str:
+                                lines.append(f"      Signals: {signals_str}")
+                        
+                        # Add answer box if present
+                        if result.get('answer_box'):
+                            lines.append(f"   Answer Box: {str(result['answer_box'])[:200]}")
+                    else:
+                        result_preview = str(result)[:500]
+                        lines.append(f"   Result: {result_preview}")
                 # Other successful actions - especially extraction/JS results
                 else:
                     tool_result = entry.observation.result

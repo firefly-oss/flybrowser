@@ -312,6 +312,7 @@ class ToolRegistry:
         warnings = []
         
         with self._lock:
+            # Process tool classes
             for name, tool_class in self._tools.items():
                 # Get metadata
                 metadata_attr = tool_class.metadata
@@ -344,6 +345,34 @@ class ToolRegistry:
                     if not has_optimal:
                         missing = [c.value for c in metadata.optimal_capabilities if c not in model_capabilities]
                         warnings.append(f"Tool '{name}' works better with: {missing}")
+            
+            # Process pre-instantiated tools (like SearchAgentTool)
+            for name, tool_instance in self._instances.items():
+                metadata = tool_instance.metadata
+                
+                # Check required capabilities
+                if metadata.required_capabilities:
+                    has_required = all(
+                        cap in model_capabilities
+                        for cap in metadata.required_capabilities
+                    )
+                    if not has_required:
+                        missing = [c.value for c in metadata.required_capabilities if c not in model_capabilities]
+                        warnings.append(f"Excluding instance '{name}': missing required capabilities {missing}")
+                        continue
+                
+                # Register instance in filtered registry
+                filtered_registry.register_instance(tool_instance)
+                
+                # Check optimal capabilities
+                if warn_suboptimal and metadata.optimal_capabilities:
+                    has_optimal = all(
+                        cap in model_capabilities
+                        for cap in metadata.optimal_capabilities
+                    )
+                    if not has_optimal:
+                        missing = [c.value for c in metadata.optimal_capabilities if c not in model_capabilities]
+                        warnings.append(f"Tool instance '{name}' works better with: {missing}")
         
         # Log warnings
         if warnings:
