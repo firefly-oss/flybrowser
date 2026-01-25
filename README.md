@@ -301,13 +301,13 @@ FlyBrowser SDK (sdk.py)
     ↓
 ReActBrowserAgent (sdk_integration.py)
     ↓ initialize()
-    ├── ToolRegistry (16+ tools)
-    │   ├── Navigation: NavigateTool, GoBackTool, RefreshTool
-    │   ├── Interaction: ClickTool, TypeTool, ScrollTool, HoverTool
+    ├── ToolRegistry (30+ tools)
+    │   ├── Navigation: NavigateTool, GoBackTool, GoForwardTool, RefreshTool
+    │   ├── Interaction: ClickTool, TypeTool, ScrollTool, HoverTool, PressKeyTool, SelectOptionTool, etc.
     │   ├── Extraction: ExtractTextTool, ScreenshotTool, GetPageStateTool
-    │   ├── Exploration: PageExplorerTool, PageAnalyzer
-    │   ├── Search: SearchAPITool, SearchHumanTool, SearchRankTool
-    │   └── System: CompleteTool, FailTool, WaitTool
+    │   ├── Exploration: PageExplorerTool
+    │   ├── Search: SearchAPITool, SearchHumanTool, SearchHumanAdvancedTool, SearchRankTool
+    │   └── System: CompleteTool, FailTool, WaitTool, AskUserTool
     ├── ReActAgent (react_agent.py)
     │   ├── TaskPlanner - Complex task planning
     │   ├── GoalInterpreter - Fast-path URL navigation
@@ -362,20 +362,23 @@ ReActAgent.execute(task, operation_mode)
 FlyBrowser uses **tools** (not separate agents) for browser operations:
 
 ```python
-# Navigation tools
-from flybrowser.agents.tools import NavigateTool, GoBackTool, RefreshTool
-
-# Interaction tools
-from flybrowser.agents.tools import ClickTool, TypeTool, ScrollTool, HoverTool
-
-# Extraction tools
-from flybrowser.agents.tools import ExtractTextTool, ScreenshotTool, GetPageStateTool
-
-# Search tools
-from flybrowser.agents.tools import SearchAPITool, SearchHumanTool, SearchRankTool
-
-# System tools
-from flybrowser.agents.tools import CompleteTool, FailTool, WaitTool
+from flybrowser.agents.tools import (
+    # Navigation tools
+    NavigateTool, GoBackTool, GoForwardTool, RefreshTool,
+    # Interaction tools
+    ClickTool, TypeTool, ScrollTool, HoverTool, PressKeyTool,
+    SelectOptionTool, CheckboxTool, FocusTool, FillTool,
+    # Extraction tools
+    ExtractTextTool, ScreenshotTool, GetPageStateTool,
+    # Search tools
+    SearchAPITool, SearchHumanTool, SearchHumanAdvancedTool, SearchRankTool,
+    # Exploration tools
+    PageExplorerTool,
+    # System tools
+    CompleteTool, FailTool, WaitTool, AskUserTool,
+    # Registry
+    ToolRegistry,
+)
 ```
 
 ### Automatic Obstacle Handling
@@ -953,10 +956,11 @@ curl -X DELETE http://localhost:8000/sessions/sess_abc123 \
 ### Examples
 | Category | Description |
 |----------|-------------|
+| [Examples README](examples/README.md) | Overview of all examples |
 | [Web Scraping](examples/scraping/) | Data extraction examples |
 | [UI Testing](examples/testing/) | Automated testing examples |
 | [Workflows](examples/workflows/) | Business automation examples |
-| [Examples Index](docs/examples/) | All examples with explanations |
+| [Examples Guide](docs/examples/index.md) | Detailed examples documentation |
 
 ---
 
@@ -1195,9 +1199,7 @@ git push origin feature/your-feature
 # 5. Open a Pull Request
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
-For architecture details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+For architecture details, see [Architecture Overview](docs/architecture/overview.md).
 
 ---
 
