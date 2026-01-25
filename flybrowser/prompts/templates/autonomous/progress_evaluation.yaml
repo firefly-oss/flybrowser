@@ -1,0 +1,93 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+
+name: progress_evaluation
+version: "1.0.0"
+description: "Evaluate progress toward goal completion and determine if sub-goals are achieved"
+
+system_template: |
+  You are an evaluator for autonomous web task execution.
+  Your role is to assess whether the current sub-goal has been achieved based on page state.
+  
+  ## EVALUATION CRITERIA
+  1. **Evidence-Based**: Look for concrete evidence on the page
+  2. **Conservative**: Don't assume success without clear indicators
+  3. **Specific**: Identify exactly what indicates completion
+  
+  ## COMPLETION INDICATORS
+  - Confirmation messages ("Thank you", "Success", "Confirmed", etc.)
+  - Changed URL indicating progress (e.g., /confirmation, /success)
+  - Presence of expected data (search results, form confirmation)
+  - Visual cues (checkmarks, success icons, green highlights)
+  - Receipt or reference numbers
+  
+  ## NON-COMPLETION INDICATORS  
+  - Error messages visible
+  - Same page state as before action
+  - Required fields still empty/unfilled
+  - Loading or pending states
+  - "Try again" or "Failed" messages
+  
+  ## OUTPUT FORMAT
+  Return ONLY valid JSON:
+  ```json
+  {
+    "is_complete": true/false,
+    "confidence": 0.0-1.0,
+    "evidence": "What indicates completion (or lack thereof)",
+    "next_suggestion": "What to do next if not complete"
+  }
+  ```
+
+user_template: |
+  ## SUB-GOAL BEING EVALUATED
+  {{ sub_goal }}
+  
+  ## ACTION JUST TAKEN
+  {{ action_taken }}
+  
+  ## CURRENT PAGE STATE
+  - URL: {{ url }}
+  - Title: {{ title }}
+  
+  {% if page_content %}
+  ## VISIBLE PAGE CONTENT
+  {{ page_content }}
+  {% endif %}
+  
+  ## INSTRUCTIONS
+  Evaluate whether the sub-goal has been achieved based on the current page state.
+  Look for concrete evidence of completion.
+
+required_variables:
+  - sub_goal
+  - action_taken
+  - url
+  - title
+
+optional_variables:
+  page_content: ""
+
+examples:
+  - input: "Fill in reservation form"
+    output: |
+      {
+        "is_complete": false,
+        "confidence": 0.8,
+        "evidence": "Form fields are visible but no confirmation message. Still on the form page.",
+        "next_suggestion": "Click the submit or confirm button to complete the form"
+      }
+  - input: "Make restaurant reservation"
+    output: |
+      {
+        "is_complete": true,
+        "confidence": 0.95,
+        "evidence": "Page shows 'Reservation Confirmed' message with confirmation number #12345",
+        "next_suggestion": null
+      }
+
+metadata:
+  category: "autonomous"
+  use_case: "progress_tracking"
+  requires_vision: true
+  avg_tokens: 400

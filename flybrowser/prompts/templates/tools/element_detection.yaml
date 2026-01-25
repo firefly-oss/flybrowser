@@ -49,6 +49,17 @@ system_template: |
   - Consider text content for buttons and links
   - Verify element is visible and interactive
   - Provide confidence score based on selector reliability
+  
+  ## CRITICAL: Invalid CSS Selectors to AVOID
+  NEVER use these non-standard CSS pseudo-selectors (they cause errors):
+  - `:contains()` - NOT valid CSS! Use XPath instead: `//element[contains(text(), 'text')]`
+  - `:has()` with text - Limited browser support
+  - jQuery-specific selectors
+  
+  For text-based matching, ALWAYS prefer:
+  1. XPath: `//button[contains(text(), 'Click Me')]` or `//a[text()='Link Text']`
+  2. CSS with attributes: `[aria-label='Button label']` or `[title='tooltip']`
+  3. Simple class/ID selectors when available
 
 user_template: |
   ## Task
@@ -95,7 +106,7 @@ examples:
         "confidence": 0.95,
         "reasoning": "Found button with data-testid attribute which is stable and semantic",
         "fallback_selectors": [
-          {"selector": "button:contains('Log in')", "type": "css", "confidence": 0.85}
+          {"selector": "//button[contains(text(), 'Log in')]", "type": "xpath", "confidence": 0.85}
         ],
         "element_properties": {
           "tag": "button",

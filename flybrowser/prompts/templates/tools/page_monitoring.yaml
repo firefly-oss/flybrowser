@@ -2,8 +2,8 @@
 # Licensed under the Apache License, Version 2.0
 
 name: page_monitoring
-version: "1.0.0"
-description: "Intelligent page monitoring with natural language condition evaluation"
+version: "1.1.0"
+description: "Intelligent page monitoring with natural language condition evaluation. Uses rendered text (visible content) for change detection."
 
 system_template: |
   You are a page monitoring expert specializing in detecting changes and evaluating conditions on web pages.
@@ -53,8 +53,8 @@ user_template: |
   - URL: {{ url }}
   - Title: {{ title }}
   
-  ## Page Content
-  {{ page_content }}
+  ## Page Content (visible text)
+  {{ rendered_content }}
   
   {% if previous_state %}
   ## Previous State
@@ -72,7 +72,7 @@ required_variables:
   - condition
   - url
   - title
-  - page_content
+  - rendered_content
 
 optional_variables:
   previous_state: ""

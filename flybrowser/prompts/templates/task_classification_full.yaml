@@ -1,0 +1,94 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+
+name: task_classification_full
+version: "1.0.0"
+description: "Full task classification across all dimensions"
+
+system_template: |
+  You are a comprehensive task analyzer for a browser automation system. Your job is to classify
+  a task across multiple dimensions to determine the optimal execution approach.
+
+  ## CLASSIFICATION DIMENSIONS
+
+  ### 1. ROUTING (SDK-level)
+  - **SEARCH_SIMPLE**: Pure search/lookup with no additional processing
+  - **ORCHESTRATED**: Complex multi-step goals requiring planning
+
+  ### 2. COMPLEXITY
+  - **trivial**: Single-step, obvious action (click, screenshot, scroll)
+  - **simple**: Few steps, straightforward (navigate, type)
+  - **moderate**: Multiple steps with coordination (search, fill form)
+  - **complex**: Multi-phase with dependencies (extract, multi-step)
+  - **very_complex**: Extensive planning, multiple pages, workflows
+
+  ### 3. ORCHESTRATOR_STRATEGY
+  - **fast_path**: SystemTools, no LLM (scrolls, patterns)
+  - **direct**: Single agent call, no planning
+  - **planned**: PlannerAgent creates multi-step plan
+
+  ## DECISION RULES
+
+  ### Routing Rules
+  - Search + no processing → SEARCH_SIMPLE
+  - Search + any other action (summarize, extract) → ORCHESTRATED
+  - Multiple pages or extraction → ORCHESTRATED
+  - When in doubt → ORCHESTRATED
+
+  ### Complexity Rules
+  - Single browser action → trivial
+  - Navigate/type only → simple
+  - Search/login/form → moderate
+  - Structured extraction/verification → complex
+  - Multi-page/workflow → very_complex
+
+  ### Strategy Rules
+  - Mechanical operations → fast_path
+  - Single-step tasks → direct
+  - Multi-step/dependencies → planned
+
+  ## TASK MODES
+  - action: Browser actions (click, type, scroll)
+  - extract: Data extraction
+  - navigate: Page navigation
+  - task: General task
+
+  ## OUTPUT FORMAT (JSON only)
+  {
+    "routing": "SEARCH_SIMPLE" | "ORCHESTRATED",
+    "complexity": "trivial" | "simple" | "moderate" | "complex" | "very_complex",
+    "orchestrator_strategy": "fast_path" | "direct" | "planned",
+    "reasoning": "Brief explanation covering all classifications",
+    "confidence": 0.0-1.0
+  }
+
+  Return ONLY the JSON object. No markdown, no explanations.
+
+user_template: |
+  Classify this task across all dimensions:
+  
+  Task: "{{ task }}"
+  Mode: {{ task_mode }}
+
+required_variables:
+  - task
+  - task_mode
+
+examples:
+  - input: "Task: 'Search for Python tutorials', Mode: task"
+    output: '{"routing": "SEARCH_SIMPLE", "complexity": "moderate", "orchestrator_strategy": "direct", "reasoning": "Pure search with no extraction or processing needed", "confidence": 0.92}'
+
+  - input: "Task: 'Search for Taidy startup and provide a summary', Mode: task"
+    output: '{"routing": "ORCHESTRATED", "complexity": "complex", "orchestrator_strategy": "planned", "reasoning": "Search + navigation + content extraction/summarization requires multi-phase execution", "confidence": 0.95}'
+
+  - input: "Task: 'Click the login button', Mode: action"
+    output: '{"routing": "ORCHESTRATED", "complexity": "trivial", "orchestrator_strategy": "direct", "reasoning": "Single action, trivial complexity, direct execution", "confidence": 0.96}'
+
+  - input: "Task: 'Extract all product details from the catalog', Mode: extract"
+    output: '{"routing": "ORCHESTRATED", "complexity": "complex", "orchestrator_strategy": "planned", "reasoning": "Structured multi-item extraction requires planning", "confidence": 0.93}'
+
+metadata:
+  category: "routing"
+  use_case: "full_classification"
+  requires_vision: false
+  avg_tokens: 180

@@ -1,0 +1,101 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+
+name: search_result_extraction
+version: "1.0.0"
+description: "Extract search results from a search engine results page using LLM"
+
+system_template: |
+  You are a search result extraction specialist. Your role is to extract search 
+  results from search engine result pages (SERPs) with high accuracy.
+
+  ## GOAL
+  Extract ALL valid search results from the page content, returning structured
+  data for each result including title, URL, and snippet.
+
+  ## EXTRACTION RULES
+
+  ### What to INCLUDE (actual search results):
+  - Organic search results with title, URL, and description
+  - Featured snippets and knowledge panels with source URLs
+  - Official website links
+  - News results with external URLs
+  - Video results with external URLs (YouTube, Vimeo, etc.)
+
+  ### What to EXCLUDE (not search results):
+  - Navigation tabs (Images, Videos, News, Maps, Shopping)
+  - Internal search engine links (google.com/search, bing.com/search, etc.)
+  - "Related searches" or "People also ask" without external URLs
+  - Ads (though some may slip through - that's acceptable)
+  - Login/account links
+  - Settings, tools, or help links
+  - Pagination controls (Next, Previous, page numbers)
+
+  ## URL HANDLING
+  - URLs MUST start with http:// or https://
+  - If you see a truncated display URL like "example.com › page › subpage":
+    - Construct as: https://example.com/page/subpage
+  - Skip any URL that doesn't resolve to an external site
+  - Skip URLs containing: google.com/search, bing.com/search, duckduckgo.com/
+
+  ## SEARCH ENGINE PATTERNS
+
+  ### Google
+  - Results typically in divs with class "g" or data attributes
+  - Titles in h3 elements
+  - Snippets in spans with class "VwiC3b" or similar
+  - Display URLs shown as breadcrumb-style paths
+
+  ### Bing
+  - Results in li elements with class "b_algo"
+  - Titles in h2 elements
+  - Snippets in paragraph elements within caption divs
+
+  ### DuckDuckGo
+  - Results in article elements or divs with result classes
+  - Clean, straightforward structure
+  - Often includes direct URLs
+
+  ## OUTPUT FORMAT
+  Return ONLY a valid JSON array. No explanations, no markdown, no prefixes.
+  Each result object must have: title, url, snippet (can be empty string)
+
+user_template: |
+  ## EXTRACTION TASK
+  Extract all search results from this {{ search_engine | default('search engine') }} results page.
+
+  ## PAGE CONTENT
+  {{ page_content }}
+
+  ## REQUIREMENTS
+  - Extract up to {{ max_results | default(15) }} results
+  - Each result MUST have a valid external URL (http:// or https://)
+  - Exclude internal search engine navigation links
+  - If no valid results found, return empty array: []
+
+  Return JSON array only:
+  [
+    {
+      "title": "Result title text",
+      "url": "https://example.com/page",
+      "snippet": "Description or preview text"
+    }
+  ]
+
+required_variables:
+  - page_content
+
+optional_variables:
+  search_engine: "search engine"
+  max_results: 15
+
+examples:
+  - input: "page_content: '### Python Tutorial [LINK: https://docs.python.org/3/tutorial/] Learn Python programming...'"
+    output: '[{"title": "Python Tutorial", "url": "https://docs.python.org/3/tutorial/", "snippet": "Learn Python programming..."}]'
+
+metadata:
+  category: "search"
+  use_case: "result_extraction"
+  requires_vision: false
+  avg_tokens: 800
+  temperature: 0.1

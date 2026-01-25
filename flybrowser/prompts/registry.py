@@ -62,6 +62,25 @@ from flybrowser.prompts.template import PromptTemplate
 from flybrowser.utils.logger import logger
 
 
+# Singleton instance for the default registry
+_default_registry: Optional["PromptRegistry"] = None
+
+
+def get_default_registry() -> "PromptRegistry":
+    """
+    Get or create the default prompt registry singleton.
+    
+    This ensures templates are loaded only once across the entire application.
+    
+    Returns:
+        The shared PromptRegistry instance
+    """
+    global _default_registry
+    if _default_registry is None:
+        _default_registry = PromptRegistry(_use_singleton=False)
+    return _default_registry
+
+
 class PromptRegistry:
     """
     Registry for managing and storing prompt templates.
@@ -69,13 +88,17 @@ class PromptRegistry:
     This class provides a centralized repository for all prompt templates.
     It supports loading templates from files, version management, and
     variant management for A/B testing.
+    
+    By default, PromptRegistry() returns a shared singleton instance to avoid
+    loading templates multiple times. Use PromptRegistry(templates_dir=custom_path)
+    to create a separate instance with custom templates.
 
     Attributes:
         templates: Dictionary mapping template keys to PromptTemplate instances
         templates_dir: Directory containing template YAML/JSON files
 
     Example:
-        >>> registry = PromptRegistry()
+        >>> registry = PromptRegistry()  # Returns shared singleton
         >>>
         >>> # Get a template
         >>> template = registry.get("data_extraction")
@@ -93,7 +116,27 @@ class PromptRegistry:
         >>> registry.register(custom)
     """
 
-    def __init__(self, templates_dir: Optional[Path] = None) -> None:
+    def __new__(cls, templates_dir: Optional[Path] = None, _use_singleton: bool = True):
+        """
+        Create or return the singleton instance.
+        
+        Args:
+            templates_dir: If provided, creates a new separate instance.
+            _use_singleton: Internal flag to control singleton behavior.
+        """
+        # If a custom templates_dir is provided, create a new instance
+        if templates_dir is not None:
+            instance = super().__new__(cls)
+            return instance
+        
+        # Return singleton for default usage
+        if _use_singleton:
+            return get_default_registry()
+        
+        # Create new instance (used internally for singleton creation)
+        return super().__new__(cls)
+
+    def __init__(self, templates_dir: Optional[Path] = None, _use_singleton: bool = True) -> None:
         """
         Initialize the prompt registry.
 
@@ -101,17 +144,23 @@ class PromptRegistry:
             templates_dir: Directory containing template files (YAML or JSON).
                 If not provided, uses the default templates directory
                 (flybrowser/prompts/templates/).
+            _use_singleton: Internal flag, do not use directly.
 
         Example:
-            Default templates directory:
+            Default templates directory (singleton):
             >>> registry = PromptRegistry()
 
-            Custom templates directory:
+            Custom templates directory (new instance):
             >>> from pathlib import Path
             >>> registry = PromptRegistry(
             ...     templates_dir=Path("./my_prompts")
             ... )
         """
+        # Skip init if already initialized (singleton pattern)
+        if hasattr(self, '_initialized') and self._initialized:
+            return
+        
+        self._initialized = True
         self.templates: Dict[str, PromptTemplate] = {}
         self.templates_dir = templates_dir or Path(__file__).parent / "templates"
 
@@ -179,20 +228,20 @@ class PromptRegistry:
         return list(self.templates.keys())
 
     def load_templates(self) -> None:
-        """Load templates from the templates directory."""
+        """Load templates from the templates directory (recursively including subdirectories)."""
         if not self.templates_dir.exists():
             logger.warning(f"Templates directory not found: {self.templates_dir}")
             return
 
-        # Load YAML templates
-        for yaml_file in self.templates_dir.glob("*.yaml"):
+        # Load YAML templates (recursively search subdirectories)
+        for yaml_file in self.templates_dir.glob("**/*.yaml"):
             try:
                 self._load_yaml_template(yaml_file)
             except Exception as e:
                 logger.error(f"Failed to load template {yaml_file}: {e}")
 
-        # Load JSON templates
-        for json_file in self.templates_dir.glob("*.json"):
+        # Load JSON templates (recursively search subdirectories)
+        for json_file in self.templates_dir.glob("**/*.json"):
             try:
                 self._load_json_template(json_file)
             except Exception as e:

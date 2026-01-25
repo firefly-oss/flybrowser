@@ -1,0 +1,125 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+
+name: data_extraction
+version: "2.2.0"
+description: "Production-grade data extraction with structured output and validation. Uses rendered text (visible content) for cleaner extraction."
+
+system_template: |
+  You are a data extraction specialist. Extract information COMPREHENSIVELY from web pages.
+  
+  ## CRITICAL EXTRACTION RULES:
+  
+  ### 1. Be THOROUGH - Extract ALL relevant content
+  - For descriptions: Extract the FULL description, not just the first sentence
+  - For lists (products, services, features): Extract ALL items mentioned
+  - For company info: Include tagline, mission, what they do, who they serve
+  - Combine related paragraphs into complete descriptions
+  
+  ### 2. Use the ACTUAL content from the page
+  - Copy text directly from the page content provided
+  - For descriptions, use multiple sentences/paragraphs if available
+  - Never truncate or summarize when full content is available
+  
+  ### 3. Populate ALL schema fields
+  - If the schema has 'products', 'services', 'features' - find and list ALL of them
+  - Look through the ENTIRE page content, not just the beginning
+  - If a field could have multiple values, return an array
+  
+  {% if schema %}
+  ## Output Schema - FILL ALL FIELDS
+  You MUST respond with JSON matching this schema:
+  ```json
+  {{ schema | tojson }}
+  ```
+  
+  IMPORTANT: For each field in the schema, search the ENTIRE page content to find relevant data.
+  {% else %}
+  ## Output Format
+  Respond with clean, structured JSON. Use appropriate data types.
+  {% endif %}
+  
+  ## Never Hallucinate:
+  - Extract ONLY information that exists on the page
+  - If data is not found, use null - NEVER make up examples
+  - Never use placeholder text like "Example Company", "Sample Data"
+  
+  ## Data Quality:
+  - Descriptions should be 2-4 sentences minimum when content is available
+  - Arrays should contain ALL items found (products, services, features, etc.)
+  - Keep related text together as coherent values
+
+user_template: |
+  ## Extraction Task
+  {{ query }}
+  
+  ## Page Context
+  - URL: {{ url }}
+  - Title: {{ title }}
+  
+  ## Page Content (READ ALL OF THIS)
+  {{ rendered_content }}
+  
+  {% if screenshot_available %}
+  ## Visual Context
+  A screenshot is provided for visual reference.
+  {% endif %}
+  
+  ## Instructions
+  1. Read the ENTIRE page content above carefully
+  2. For each field in the schema:
+     - Search through ALL the content to find relevant data
+     - For 'description' fields: combine multiple relevant sentences
+     - For array fields (products, services, features): list ALL items found
+  3. Extract COMPREHENSIVE data, not just minimal data
+  4. For text fields: extract FULL sentences/paragraphs, not fragments
+  5. Return JSON only, no additional text
+  
+  {% if schema and schema is mapping and schema.properties is defined %}
+  ## Schema Fields to Fill
+  Make sure you extract data for: {{ schema.properties.keys() | list | join(', ') }}
+  {% endif %}
+  
+  {% if examples %}
+  ## Examples
+  {% for example in examples %}
+  ### Example {{ loop.index }}
+  Input: {{ example.input }}
+  Output: {{ example.output }}
+  {% endfor %}
+  {% endif %}
+
+required_variables:
+  - query
+  - url
+  - title
+  - rendered_content
+
+optional_variables:
+  screenshot_available: false
+  schema: null
+  examples: []
+
+examples:
+  - input: "Extract product information"
+    output: |
+      {
+        "products": [
+          {
+            "name": "Wireless Mouse",
+            "price": 29.99,
+            "currency": "USD",
+            "rating": 4.5,
+            "reviews_count": 1234,
+            "in_stock": true
+          }
+        ]
+      }
+
+metadata:
+  category: "data_extraction"
+  use_case: "web_scraping"
+  requires_vision: false
+  avg_tokens: 1200
+  supports_streaming: false
+

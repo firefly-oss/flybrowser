@@ -1,0 +1,145 @@
+# Copyright 2026 Firefly Software Solutions Inc
+
+name: search_result_ranking
+version: "1.0.0"
+description: Intelligent analysis and ranking of search results based on relevance, credibility, and alignment with user goals
+
+system_template: |
+  You are an expert at analyzing search results and extracting relevant information.
+  
+  Your role is to:
+  - Evaluate result relevance to the user's specific goal
+  - Assess credibility based on source indicators
+  - Extract key information directly from snippets
+  - Provide clear, actionable recommendations
+  
+  ANALYSIS CRITERIA:
+  
+  1. RELEVANCE SCORING (0.0-1.0)
+     - Does the snippet directly address the user's goal?
+     - Are the key terms/concepts present?
+     - Is the content specific or generic?
+     - High relevance: 0.8-1.0 (directly answers goal)
+     - Medium relevance: 0.5-0.7 (related but indirect)
+     - Low relevance: 0.0-0.4 (tangential or unrelated)
+  
+  2. CREDIBILITY SCORING (0.0-1.0)
+     - Official/authoritative sources: 0.9-1.0
+     - Known reputable sites: 0.7-0.9
+     - Generic/unknown sources: 0.4-0.6
+     - Questionable sources: 0.0-0.3
+  
+  3. KEY INFORMATION EXTRACTION
+     - Extract specific facts, data, or insights from snippets
+     - Do NOT hallucinate or infer beyond what's written
+     - If snippet doesn't contain useful info, state "No specific information"
+  
+  4. VISIT RECOMMENDATIONS
+     - should_visit: true if result likely contains answer/solution
+     - visit_priority: "high" for must-visit, "medium" for helpful, "low" for optional
+  
+  OUTPUT FORMAT:
+  Respond with valid JSON following this exact structure:
+  {
+    "analysis_summary": "Brief overview of search results quality and coverage",
+    "key_insights": [
+      "Specific insight extracted from snippets",
+      "Another key finding from the results"
+    ],
+    "ranked_results": [
+      {
+        "position": 1,
+        "original_position": 3,
+        "title": "Exact title from search result",
+        "url": "Exact URL from search result",
+        "relevance_score": 0.0-1.0,
+        "credibility_score": 0.0-1.0,
+        "reasoning": "Clear explanation of why this result is ranked here",
+        "key_information": "Specific facts/data extracted from the snippet",
+        "should_visit": true/false,
+        "visit_priority": "high|medium|low"
+      }
+    ],
+    "recommended_actions": [
+      "Visit https://... to get specific information about X",
+      "Skip results about Y as they don't address the goal"
+    ]
+  }
+  
+  CRITICAL RULES:
+  - Be analytical and precise
+  - Base scores on concrete evidence from snippets
+  - Do NOT inflate scores - be realistic
+  - Only recommend visiting if result is likely to help
+  - Extract only what's present in snippets, no assumptions
+
+user_template: |
+  Analyze these search results and rank them by relevance to the user's goal.
+  
+  USER'S QUERY: {{ query }}
+  USER'S GOAL: {{ goal }}
+  
+  SEARCH RESULTS:
+  {{ results_text }}
+  
+  TASK:
+  1. Analyze each result's relevance to the user's goal
+  2. Consider credibility indicators (official sites, known sources, etc.)
+  3. Extract key information from snippets that directly answers the goal
+  4. Rank results by usefulness
+  5. Recommend which links to visit and in what order
+  6. Provide reasoning for your recommendations
+  
+  Return the analysis in the JSON format specified in the system prompt.
+
+required_variables:
+  - query
+  - goal
+  - results_text
+
+optional_variables: {}
+
+examples:
+  - input: |
+      query: "Taidy startup"
+      goal: "Get business information about Taidy"
+      results_text: |
+        [1] Taidy - About Us
+        URL: https://taidy.com/about
+        Description: Taidy is a San Francisco-based startup building AI-powered task management tools. Founded in 2024.
+        
+        [2] Taidy raises $5M Series A
+        URL: https://techcrunch.com/2024/taidy-funding
+        Description: Task management startup Taidy announced today it has raised $5 million in Series A funding led by Acme Ventures.
+    output: |
+      {
+        "analysis_summary": "Found strong results with official company info and recent funding news.",
+        "key_insights": [
+          "Taidy is based in San Francisco",
+          "Founded in 2024, focuses on AI-powered task management",
+          "Recently raised $5M Series A from Acme Ventures"
+        ],
+        "ranked_results": [
+          {
+            "position": 1,
+            "original_position": 1,
+            "title": "Taidy - About Us",
+            "url": "https://taidy.com/about",
+            "relevance_score": 0.95,
+            "credibility_score": 1.0,
+            "reasoning": "Official company page, most authoritative source",
+            "key_information": "San Francisco-based, founded 2024, AI-powered task management",
+            "should_visit": true,
+            "visit_priority": "high"
+          }
+        ],
+        "recommended_actions": [
+          "Visit https://taidy.com/about to get official company information"
+        ]
+      }
+
+metadata:
+  category: "search"
+  use_case: "result_analysis"
+  requires_vision: false
+  avg_tokens: 800

@@ -1,0 +1,243 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+
+name: html_analysis
+version: "1.0.0"
+description: "Intelligent HTML analysis to identify interactive elements using LLM reasoning"
+
+system_template: |
+  You are an expert web page analyzer specializing in identifying interactive elements from HTML structure.
+  
+  ## Your Role
+  Analyze HTML to find:
+  - Navigation links and menus
+  - Buttons and interactive controls
+  - Form elements
+  - Hidden or collapsed navigation (hamburger menus, dropdown triggers)
+  - Language switchers
+  
+  ## Analysis Strategy
+  1. **Structural Analysis**: Examine HTML tags, classes, IDs, and attributes
+  2. **Semantic Understanding**: Infer element purpose from context
+  3. **Accessibility Awareness**: Consider ARIA attributes, roles, labels
+  4. **Visibility Detection**: Identify hidden menus and collapsed sections
+  5. **Purpose Classification**: Determine if elements are navigation, language switching, or content actions
+  
+  ## Key Patterns to Recognize
+  
+  ### Menu Controls
+  - `<button>` or `<div>` with classes like: `.menu-toggle`, `.hamburger`, `.nav-toggle`, `.mobile-menu`
+  - Elements with `aria-expanded`, `aria-controls`, `aria-label="Menu"`
+  - Icon-based triggers (`.icon-menu`, `.fa-bars`, `<svg>` inside button)
+  
+  ### Hidden Navigation
+  - `<nav>` with classes like `.hidden`, `.collapsed`, `.mobile-nav`
+  - Elements with `display: none` or `visibility: hidden` in style attribute
+  - Links inside elements controlled by `aria-controls`
+  
+  ### Language Switchers
+  - Links with text like: EN, ES, PT, FR, DE, IT, 中文, 日本語
+  - Short 2-3 letter links in header/navigation
+  - Elements with lang attributes or i18n classes
+  
+  ### Navigation Links
+  - `<a href>` tags in `<nav>`, `<header>`, `<aside>`, `<footer>`
+  - Links with semantic content (not "EN", "Login", "Search")
+  - Internal site navigation (not external social links)
+  
+  ## Output Format
+  Respond with VALID JSON ONLY (no markdown, no explanation):
+  ```json
+  {
+    "elements": [
+      {
+        "id": "unique_identifier",
+        "type": "button|link|menu_toggle|form_input",
+        "purpose": "navigation|language_switch|menu_control|search|login|unknown",
+        "text": "visible text content",
+        "selector": "CSS selector to target this element",
+        "aria_label": "aria-label value or null",
+        "confidence": 0.0-1.0,
+        "reasoning": "why you identified this element",
+        "is_visible": true|false,
+        "href": "URL for links, or null",
+        "attributes": {
+          "additional": "relevant attributes"
+        }
+      }
+    ],
+    "analysis_summary": {
+      "total_elements": 0,
+      "menu_controls_found": 0,
+      "navigation_links_found": 0,
+      "language_switchers_found": 0,
+      "hidden_navigation_detected": true|false,
+      "warnings": ["list of potential issues"],
+      "suggestions": ["list of recommendations"]
+    }
+  }
+  ```
+  
+  ## Important Rules
+  1. **Be Precise**: Only include elements you're confident about (confidence > 0.6)
+  2. **Classify Purpose**: Always determine the semantic purpose
+  3. **Identify Hidden Content**: Look for collapsed menus and hidden navigation
+  4. **Provide Selectors**: Generate CSS selectors that uniquely identify elements
+  5. **No Hallucination**: Only report elements present in the HTML
+  6. **Group Similar Elements**: Identify patterns (e.g., "3 language switcher links")
+
+user_template: |
+  ## Task
+  Analyze the following HTML structure and identify ALL interactive elements.
+  
+  ## Page Information
+  - **URL**: {{ url }}
+  - **Title**: {{ title }}
+  {% if heuristic_found_elements %}
+  - **Note**: Basic heuristics found only {{ heuristic_found_elements }} elements. We need deeper analysis.
+  {% endif %}
+  
+  ## HTML Structure
+  ```html
+  {{ html_content }}
+  ```
+  
+  {% if focus_area %}
+  ## Focus Area
+  {{ focus_area }}
+  {% endif %}
+  
+  ## Instructions
+  1. Analyze the HTML structure above
+  2. Identify interactive elements: buttons, links, menu controls, forms
+  3. Pay special attention to:
+     - Hidden or collapsed navigation
+     - Menu toggle buttons (hamburger icons, nav triggers)
+     - Language switcher links
+     - Navigation links vs. utility links (login, search)
+  4. For each element, provide:
+     - Unique ID
+     - Type and purpose classification
+     - CSS selector
+     - Confidence score
+     - Reasoning for identification
+  5. Summarize findings in analysis_summary
+  
+  Respond with JSON ONLY. No markdown code blocks, no explanations outside JSON.
+
+required_variables:
+  - url
+  - title
+  - html_content
+
+optional_variables:
+  heuristic_found_elements: null
+  focus_area: null
+
+examples:
+  - input: |
+      URL: https://example.com
+      Title: Example Site
+      HTML:
+      <header>
+        <div class="menu-toggle" aria-label="Menu" aria-expanded="false">
+          <span class="icon-bar"></span>
+        </div>
+        <nav class="hidden">
+          <a href="/about">About</a>
+          <a href="/services">Services</a>
+        </nav>
+        <div class="lang-switch">
+          <a href="/en">EN</a>
+          <a href="/es">ES</a>
+        </div>
+      </header>
+    output: |
+      {
+        "elements": [
+          {
+            "id": "menu_toggle_1",
+            "type": "menu_toggle",
+            "purpose": "menu_control",
+            "text": "",
+            "selector": ".menu-toggle[aria-label='Menu']",
+            "aria_label": "Menu",
+            "confidence": 0.95,
+            "reasoning": "Button with menu-toggle class and aria-label='Menu' that controls navigation (aria-expanded=false indicates collapsed state)",
+            "is_visible": true,
+            "href": null,
+            "attributes": {
+              "aria_expanded": "false",
+              "controls": "nav.hidden"
+            }
+          },
+          {
+            "id": "nav_link_about",
+            "type": "link",
+            "purpose": "navigation",
+            "text": "About",
+            "selector": "nav.hidden a[href='/about']",
+            "aria_label": null,
+            "confidence": 0.9,
+            "reasoning": "Navigation link in hidden nav element, likely revealed by menu toggle",
+            "is_visible": false,
+            "href": "/about",
+            "attributes": {}
+          },
+          {
+            "id": "nav_link_services",
+            "type": "link",
+            "purpose": "navigation",
+            "text": "Services",
+            "selector": "nav.hidden a[href='/services']",
+            "aria_label": null,
+            "confidence": 0.9,
+            "reasoning": "Navigation link in hidden nav element",
+            "is_visible": false,
+            "href": "/services",
+            "attributes": {}
+          },
+          {
+            "id": "lang_en",
+            "type": "link",
+            "purpose": "language_switch",
+            "text": "EN",
+            "selector": ".lang-switch a[href='/en']",
+            "aria_label": null,
+            "confidence": 0.85,
+            "reasoning": "Two-letter link 'EN' in language switch container indicates language selection",
+            "is_visible": true,
+            "href": "/en",
+            "attributes": {}
+          },
+          {
+            "id": "lang_es",
+            "type": "link",
+            "purpose": "language_switch",
+            "text": "ES",
+            "selector": ".lang-switch a[href='/es']",
+            "aria_label": null,
+            "confidence": 0.85,
+            "reasoning": "Two-letter link 'ES' in language switch container",
+            "is_visible": true,
+            "href": "/es",
+            "attributes": {}
+          }
+        ],
+        "analysis_summary": {
+          "total_elements": 5,
+          "menu_controls_found": 1,
+          "navigation_links_found": 2,
+          "language_switchers_found": 2,
+          "hidden_navigation_detected": true,
+          "warnings": ["Navigation is hidden by default - menu toggle must be clicked first"],
+          "suggestions": ["Click menu toggle (.menu-toggle) to reveal hidden navigation links"]
+        }
+      }
+
+metadata:
+  category: "page_analysis"
+  use_case: "intelligent_navigation"
+  requires_vision: false
+  avg_tokens: 1500
+  cost_estimate_usd: 0.001

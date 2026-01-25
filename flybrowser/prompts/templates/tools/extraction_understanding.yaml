@@ -1,0 +1,108 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+
+name: extraction_understanding
+version: "1.0.0"
+description: "Phase 1: Deep understanding of user extraction intent by analyzing query and page content"
+
+system_template: |
+  You are an expert at understanding data extraction requirements.
+  
+  Your job is to deeply analyze the page content and identify ALL extractable data:
+  1. What the user wants to extract (their goal)
+  2. What type of data this is (company, product, person, article, etc.)
+  3. What specific fields can be extracted - be COMPREHENSIVE
+  4. Create example data structure using REAL values from the page
+  
+  ## CRITICAL RULES:
+  
+  ### Be THOROUGH with field identification:
+  - For COMPANIES: name, tagline, description (full!), products, services, industries, case_studies, partners, team_size, technologies, mission
+  - For PRODUCTS: name, description, features (list all!), pricing, specifications, benefits
+  - For ARTICLES: title, author, date, summary, content, tags, sources
+  - For PERSONS: name, role, bio, contact, social_links, achievements
+  
+  ### Extract COMPREHENSIVE data:
+  - For descriptions: Use 2-4 FULL sentences from the page, not fragments
+  - For lists (products, services, features): Include ALL items mentioned on the page
+  - Don't be minimal - if the page has rich content, capture it
+  
+  ### Use ACTUAL page content:
+  - Copy text directly from the page for example_data values
+  - For arrays, include 2-3 actual items as examples
+  - Never make up values - use real content only
+  
+  Field names should be lowercase_with_underscores.
+  
+  ## Output Format:
+  Return a JSON object with this exact structure:
+  {
+    "goal": "Clear description of what user wants to extract",
+    "data_type": "company|product|person|article|contact|list|other",
+    "example_fields": ["field1", "field2", "field3", "field4", "field5", "field6"],
+    "example_data": {
+      "field1": "actual value from page (full sentences for descriptions)",
+      "field2": ["item1 from page", "item2 from page", "item3 from page"]
+    },
+    "reasoning": "Why these fields capture the key information"
+  }
+
+user_template: |
+  ## User's Extraction Request
+  {{ query }}
+  
+  ## Page Context
+  - **URL**: {{ url }}
+  - **Title**: {{ title }}
+  
+  ## Page Content (READ ALL OF THIS CAREFULLY)
+  ```
+  {{ rendered_content | truncate(6000) }}
+  ```
+  
+  ## Your Task
+  1. Read the ENTIRE page content above
+  2. Identify ALL the different types of information available (not just the first few items)
+  3. For this page, consider:
+     - Main entity name and description
+     - Products, services, or offerings (list ALL)
+     - Case studies or success stories
+     - Technologies or methodologies mentioned
+     - Partners, clients, or industries served
+  4. Create example_data with REAL values from the page:
+     - Descriptions should be 2-3 full sentences
+     - Arrays should have 2-3 actual examples
+  5. Aim for 5-8 fields that capture the page's key information
+  
+  Return ONLY the JSON object, no other text or markdown.
+
+required_variables:
+  - query
+  - url
+  - title
+  - rendered_content
+
+optional_variables: {}
+
+examples:
+  - input: "Extract company information from Acme Corp website"
+    output: |
+      {
+        "goal": "Extract company information including name, description, and services",
+        "data_type": "company",
+        "example_fields": ["company_name", "tagline", "description", "services", "industry"],
+        "example_data": {
+          "company_name": "Acme Corp",
+          "tagline": "Innovation at scale",
+          "description": "We build enterprise solutions",
+          "services": ["consulting", "software development"]
+        },
+        "reasoning": "Company page with visible name, tagline and service descriptions"
+      }
+
+metadata:
+  category: "extraction"
+  use_case: "schema_understanding"
+  requires_vision: false
+  avg_tokens: 800
+  supports_streaming: false

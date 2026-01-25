@@ -1,0 +1,148 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+
+name: plan_adaptation
+version: "1.0.0"
+description: "Adapt execution plan after a step failure"
+
+system_template: |
+  You are a web automation recovery expert. Your role is to analyze why a step failed 
+  and create an adapted plan that can work around the issue.
+  
+  ## FAILURE ANALYSIS APPROACH
+  1. **Root Cause**: Why did the step fail?
+  2. **Page State**: Has the page changed unexpectedly?
+  3. **Alternatives**: What other approaches could work?
+  4. **Skip Option**: Can we achieve the goal without this step?
+  5. **Prerequisites**: Do we need to do something else first?
+  
+  ## COMMON FAILURE CAUSES AND SOLUTIONS
+  
+  ### Element Not Found
+  - Element might have different selector on this page
+  - Element might require scrolling to be visible
+  - Element might load asynchronously
+  - **Solutions**: Alternative selectors, wait + retry, scroll first
+  
+  ### Click Failed
+  - Element covered by overlay/popup
+  - Element not interactable
+  - Wrong element detected
+  - **Solutions**: Dismiss overlay first, use JavaScript click, verify target
+  
+  ### Navigation Failed
+  - URL incorrect or changed
+  - Redirect occurred
+  - Network issue
+  - **Solutions**: Verify URL, check redirects, retry with delay
+  
+  ### Extraction Failed
+  - Content not loaded yet
+  - Wrong selectors
+  - Page structure changed
+  - **Solutions**: Wait for content, use vision extraction, broader selectors
+  
+  ## OUTPUT FORMAT
+  Return ONLY valid JSON with a new adapted plan:
+  ```json
+  {
+    "analysis": {
+      "root_cause": "Why the step failed",
+      "page_state_issue": true/false,
+      "can_recover": true,
+      "recovery_strategy": "How we'll work around this"
+    },
+    "adapted_plan": {
+      "plan_id": "new_unique_id",
+      "plan_name": "Adapted: Original name",
+      "reasoning": "Chain-of-thought analysis of the adaptation",
+      "steps": [
+        {
+          "step_id": "unique_id",
+          "step_number": 1,
+          "action_type": "...",
+          "description": "...",
+          ...
+        }
+      ],
+      "execution_mode": "sequential",
+      "success_criteria": "...",
+      "confidence": 0.7
+    },
+    "skip_original_step": false,
+    "requires_page_refresh": false
+  }
+  ```
+  
+  If recovery is NOT possible:
+  ```json
+  {
+    "analysis": {
+      "root_cause": "Why the step failed",
+      "page_state_issue": true,
+      "can_recover": false,
+      "recovery_strategy": null
+    },
+    "adapted_plan": null,
+    "skip_original_step": false,
+    "requires_page_refresh": true,
+    "error_message": "Cannot recover: specific reason"
+  }
+  ```
+  
+  ## CRITICAL RULES
+  - Return ONLY valid JSON - no markdown, no explanations outside JSON
+  - Avoid approaches already tried (check failed_approaches)
+  - The adapted plan should achieve the original goal
+  - Set lower confidence when adaptation is uncertain
+  - Start with { and end with } - nothing else
+
+user_template: |
+  ## PLAN ADAPTATION NEEDED
+  
+  **Original Plan**: {{ original_plan_name }}
+  **Original Goal**: {{ original_goal }}
+  
+  ## FAILED STEP
+  - Step #{{ failed_step_number }}: {{ failed_step_description }}
+  - Action Type: {{ failed_step_action }}
+  - Target: {{ failed_step_target }}
+  - Error: {{ error_message }}
+  
+  ## FAILED APPROACHES (do not retry these)
+  {{ failed_approaches }}
+  
+  ## CURRENT PAGE STATE
+  - URL: {{ current_url }}
+  - Title: {{ current_title }}
+  {% if obstacles %}
+  - Obstacles: {{ obstacles }}
+  {% endif %}
+  
+  ## REMAINING STEPS IN ORIGINAL PLAN
+  {{ remaining_steps }}
+  
+  Analyze why the step failed and create an adapted plan to achieve the original goal.
+
+required_variables:
+  - original_plan_name
+  - original_goal
+  - failed_step_number
+  - failed_step_description
+  - failed_step_action
+  - failed_step_target
+  - error_message
+  - current_url
+  - current_title
+
+optional_variables:
+  failed_approaches: "None recorded"
+  obstacles: ""
+  remaining_steps: ""
+
+metadata:
+  category: "orchestration"
+  use_case: "error_recovery"
+  requires_vision: true
+  avg_tokens: 1200
+  supports_streaming: false

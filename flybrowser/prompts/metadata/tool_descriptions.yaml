@@ -1,0 +1,574 @@
+# Copyright 2026 Firefly Software Solutions Inc
+
+name: tool_descriptions
+version: "1.0.0"
+description: Centralized repository of all tool descriptions and metadata for FlyBrowser agents
+
+# This template is not rendered like others - it's a data source
+# Tools load their descriptions from here for consistency
+
+tools:
+  # System Tools
+  complete:
+    name: "complete"
+    description: "Signal that the task has been completed successfully. Use this when you have accomplished the goal."
+    category: "SYSTEM"
+    safety_level: "SAFE"
+    parameters:
+      - name: "summary"
+        type: "string"
+        description: "A summary of what was accomplished"
+        required: true
+      - name: "result"
+        type: "object"
+        description: "Optional structured result data"
+        required: false
+
+  fail:
+    name: "fail"
+    description: "Signal that the task cannot be completed. Use this when you encounter an unrecoverable error."
+    category: "SYSTEM"
+    safety_level: "SAFE"
+    parameters:
+      - name: "reason"
+        type: "string"
+        description: "The reason why the task failed"
+        required: true
+      - name: "recoverable"
+        type: "boolean"
+        description: "Whether the failure might be recoverable with different approach"
+        required: false
+
+  wait:
+    name: "wait"
+    description: "Wait for a specified number of seconds. Use this when you need to wait for page loading or animations."
+    category: "SYSTEM"
+    safety_level: "SAFE"
+    parameters:
+      - name: "seconds"
+        type: "number"
+        description: "Number of seconds to wait (max 30)"
+        required: true
+      - name: "reason"
+        type: "string"
+        description: "Reason for waiting"
+        required: false
+
+  ask_user:
+    name: "ask_user"
+    description: "Ask the user for input or clarification. Use this when you need information that wasn't provided."
+    category: "SYSTEM"
+    safety_level: "SAFE"
+    parameters:
+      - name: "question"
+        type: "string"
+        description: "The question to ask the user"
+        required: true
+
+  # Navigation Tools
+  navigate:
+    name: "navigate"
+    description: "Navigate to a specific URL. This loads a new webpage entirely, replacing current content. Use for initial page loads and direct URL navigation. Automatically handles cookie banners and popups after navigation."
+    category: "NAVIGATION"
+    safety_level: "MODERATE"
+    parameters:
+      - name: "url"
+        type: "string"
+        description: "Full URL with protocol (e.g., 'https://google.com', 'https://example.com/page')"
+        required: true
+      - name: "wait_until"
+        type: "string"
+        description: "When navigation is considered complete: 'domcontentloaded' (faster), 'load' (all resources), 'networkidle' (for SPAs)"
+        required: false
+        enum: ["load", "domcontentloaded", "networkidle", "commit"]
+    examples:
+      - 'navigate({"url": "https://google.com"})'
+      - 'navigate({"url": "https://example.com/login", "wait_until": "networkidle"})'
+
+  go_back:
+    name: "go_back"
+    description: "Go back to the previous page in browser history. Like clicking browser's back button. Useful for undoing navigation or returning to search results."
+    category: "NAVIGATION"
+    safety_level: "SAFE"
+    parameters: []
+    examples:
+      - 'go_back({}) - Return to previous page'
+
+  go_forward:
+    name: "go_forward"
+    description: "Go forward in browser history (after going back). Like clicking browser's forward button."
+    category: "NAVIGATION"
+    safety_level: "SAFE"
+    parameters: []
+    examples:
+      - 'go_forward({}) - Go to next page in history'
+
+  refresh:
+    name: "refresh"
+    description: "Refresh/reload the current page. Useful when content may have updated or page didn't load correctly."
+    category: "NAVIGATION"
+    safety_level: "SAFE"
+    parameters: []
+    examples:
+      - 'refresh({}) - Reload current page'
+
+  # Interaction Tools
+  click:
+    name: "click"
+    description: "Click on an element. Supports buttons, links, checkboxes, radio buttons, and any clickable element. Use CSS selectors for precision, or natural language with use_ai=true for dynamic pages. May trigger navigation, form submission, or UI updates."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector (e.g., '#submit', '.btn-primary', 'button[type=submit]') or natural language description"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Use AI/VLM to find element by visual appearance. Set true for natural language selectors."
+        required: false
+    examples:
+      - 'click({"selector": "#login-button"}) - Click by ID'
+      - 'click({"selector": "button.submit"}) - Click by class'
+      - 'click({"selector": "Sign In", "use_ai": true}) - AI finds button by text'
+
+  type_text:
+    name: "type_text"
+    description: "Type text into an input field or textarea. Clears existing content by default. Use for search boxes, login forms, text areas. For form submission, combine with press_enter=true or click the submit button."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector of input (e.g., 'input[name=email]', '#search', 'textarea')"
+        required: true
+      - name: "text"
+        type: "string"
+        description: "Text to type into the field"
+        required: true
+      - name: "clear_first"
+        type: "boolean"
+        description: "Clear field before typing (default: true)"
+        required: false
+      - name: "press_enter"
+        type: "boolean"
+        description: "Press Enter after typing to submit (default: false)"
+        required: false
+    examples:
+      - 'type_text({"selector": "input[name=q]", "text": "python tutorials", "press_enter": true})'
+      - 'type_text({"selector": "#email", "text": "user@example.com"})'
+
+  press_key:
+    name: "press_key"
+    description: "Press a keyboard key. Use for Enter (submit forms), Escape (close modals), Tab (next field), Arrow keys (navigation). Works on currently focused element."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "key"
+        type: "string"
+        description: "Key name: 'Enter', 'Escape', 'Tab', 'ArrowDown', 'ArrowUp', 'Backspace', 'Delete', etc."
+        required: true
+    examples:
+      - 'press_key({"key": "Enter"}) - Submit form'
+      - 'press_key({"key": "Escape"}) - Close modal/dropdown'
+      - 'press_key({"key": "Tab"}) - Move to next field'
+
+  scroll:
+    name: "scroll"
+    description: "Scroll the page to reveal content. Use 'down'/'up' for incremental scrolling, 'top'/'bottom' to jump to extremes. Essential for pages with lazy-loaded content or long lists."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "direction"
+        type: "string"
+        description: "Direction: 'up', 'down' (incremental), 'top', 'bottom' (jump to edge)"
+        required: true
+        enum: ["up", "down", "top", "bottom"]
+      - name: "amount"
+        type: "number"
+        description: "Pixels to scroll (default: 500, ignored for top/bottom)"
+        required: false
+    examples:
+      - 'scroll({"direction": "down"}) - Scroll down 500px'
+      - 'scroll({"direction": "bottom"}) - Jump to page bottom'
+      - 'scroll({"direction": "up", "amount": 200}) - Scroll up 200px'
+
+  hover:
+    name: "hover"
+    description: "Move the mouse to hover over an element, useful for revealing tooltips or dropdown menus."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description of the element to hover over"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the element (for natural language descriptions)"
+        required: false
+
+  select_option:
+    name: "select_option"
+    description: "Select an option from a dropdown or select element. Can use CSS selector or natural language description of the dropdown."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description (e.g., 'country dropdown', '#country-select')"
+        required: true
+      - name: "option"
+        type: "string"
+        description: "The option to select - can be the visible text, value, or description"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the element and option"
+        required: false
+
+  check_checkbox:
+    name: "check_checkbox"
+    description: "Check or uncheck a checkbox element. Can use CSS selector or natural language description."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description (e.g., 'remember me checkbox', 'terms agreement')"
+        required: true
+      - name: "checked"
+        type: "boolean"
+        description: "Whether to check (true) or uncheck (false) the checkbox"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the checkbox"
+        required: false
+
+  focus:
+    name: "focus"
+    description: "Focus on an element, useful before typing or interacting with form fields. Can use CSS selector or natural language."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description (e.g., 'search box', 'email input')"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the element"
+        required: false
+
+  fill:
+    name: "fill"
+    description: "Fill a form field by clearing it first and typing the value. More reliable than type_text for form inputs. Can use CSS selector or natural language."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description (e.g., 'username field', 'email input')"
+        required: true
+      - name: "value"
+        type: "string"
+        description: "The value to fill in the field"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the element"
+        required: false
+
+  wait_for_selector:
+    name: "wait_for_selector"
+    description: "Wait for an element matching the selector to appear on the page. Useful for dynamically loaded content."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector of the element to wait for"
+        required: true
+      - name: "state"
+        type: "string"
+        description: "State to wait for"
+        required: false
+        enum: ["attached", "visible", "hidden", "detached"]
+      - name: "timeout"
+        type: "number"
+        description: "Maximum time to wait in milliseconds (default: 30000)"
+        required: false
+
+  double_click:
+    name: "double_click"
+    description: "Double-click on an element. Use this for opening files, editing text in-place, or any interaction requiring double-click. Supports CSS selectors or natural language descriptions with AI element detection."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description (e.g., 'file icon', 'editable cell')"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the element"
+        required: false
+
+  right_click:
+    name: "right_click"
+    description: "Right-click on an element to open context menu. Use this to access copy, paste, save, and other context menu options. Supports CSS selectors or natural language descriptions."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description (e.g., 'image', 'download link')"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the element"
+        required: false
+
+  drag_and_drop:
+    name: "drag_and_drop"
+    description: "Drag an element and drop it onto another element. Use this for file uploads, sortable lists, sliders, and reordering items. Supports CSS selectors or natural language descriptions."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "source_selector"
+        type: "string"
+        description: "CSS selector or natural language description of element to drag (e.g., 'first list item', 'file icon')"
+        required: true
+      - name: "target_selector"
+        type: "string"
+        description: "CSS selector or natural language description of drop target (e.g., 'trash icon', 'second position')"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find both elements"
+        required: false
+
+  upload_file:
+    name: "upload_file"
+    description: "Upload a file using a file input element. Handles both visible and hidden file inputs. Supports CSS selectors or natural language descriptions."
+    category: "INTERACTION"
+    safety_level: "MODERATE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description of the file input or upload button (e.g., 'upload button', 'file input')"
+        required: true
+      - name: "file_path"
+        type: "string"
+        description: "Absolute path to the file to upload"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the upload element"
+        required: false
+
+  evaluate_javascript:
+    name: "evaluate_javascript"
+    description: "Execute JavaScript code in the page context. Use for advanced DOM manipulation, accessing page variables, or custom interactions not covered by other tools. Returns the result of the expression."
+    category: "INTERACTION"
+    safety_level: "MODERATE"
+    parameters:
+      - name: "script"
+        type: "string"
+        description: "JavaScript code to execute in the page context"
+        required: true
+
+  get_attribute:
+    name: "get_attribute"
+    description: "Get the value of a specific attribute from an element. Use this to extract href, src, data-* attributes, or any HTML attribute. Supports CSS selectors or natural language descriptions."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description (e.g., 'download link', 'profile image')"
+        required: true
+      - name: "attribute"
+        type: "string"
+        description: "Name of the attribute to retrieve (e.g., 'href', 'src', 'data-id')"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the element"
+        required: false
+
+  clear_input:
+    name: "clear_input"
+    description: "Clear all content from an input field. Use this before typing new content or to reset form fields. Supports CSS selectors or natural language descriptions."
+    category: "INTERACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector or natural language description (e.g., 'search box', 'email field')"
+        required: true
+      - name: "use_ai"
+        type: "boolean"
+        description: "Whether to use AI/VLM to find the element"
+        required: false
+
+  # Extraction Tools
+  extract_text:
+    name: "extract_text"
+    description: "Extract text content from any element on the page. Returns visible text only (not HTML). Use 'body' selector to get all page text. For specific content, target the element's CSS selector."
+    category: "EXTRACTION"
+    safety_level: "SAFE"
+    parameters:
+      - name: "selector"
+        type: "string"
+        description: "CSS selector of element (e.g., 'body', 'h1', '.content', '#main-text', 'article')"
+        required: true
+    examples:
+      - 'extract_text({"selector": "body"}) - Get all page text'
+      - 'extract_text({"selector": "h1"}) - Get main heading'
+      - 'extract_text({"selector": ".price"}) - Extract price text'
+
+  screenshot:
+    name: "screenshot"
+    description: "Take a screenshot for visual analysis. Use to understand complex layouts, verify actions worked, or when text extraction misses visual content. With vision-enabled models, the screenshot is automatically analyzed."
+    category: "EXTRACTION"
+    safety_level: "SAFE"
+    required_capabilities: ["VISION"]
+    parameters:
+      - name: "full_page"
+        type: "boolean"
+        description: "Capture full scrollable page (true) or just visible viewport (false, default)"
+        required: false
+    examples:
+      - 'screenshot({}) - Capture current viewport'
+      - 'screenshot({"full_page": true}) - Capture entire page'
+
+  get_page_state:
+    name: "get_page_state"
+    description: "Get comprehensive page information: URL, title, all links (with URLs), forms, inputs, buttons. ALWAYS use this first when exploring a new page to discover available elements and their selectors. More efficient than screenshot for finding specific elements."
+    category: "EXTRACTION"
+    safety_level: "SAFE"
+    parameters: []
+    examples:
+      - 'get_page_state({}) - Discover all interactive elements on page'
+    returns_description: "Returns {url, title, links[], forms[], inputs[], buttons[]} with selectors"
+
+  page_explorer:
+    name: "page_explorer"
+    description: "Systematically explore entire page by scrolling and capturing annotated screenshots at each position. Builds a PageMap with spatial understanding. Use for long pages or when you need to understand full page layout. Requires vision capability."
+    category: "EXTRACTION"
+    safety_level: "SAFE"
+    required_capabilities: ["VISION"]
+    parameters:
+      - name: "max_screenshots"
+        type: "integer"
+        description: "Max screenshots (default: auto, typically 3-8)"
+        required: false
+      - name: "scroll_step_px"
+        type: "integer"
+        description: "Scroll amount per step (default: auto, ~viewport height)"
+        required: false
+    examples:
+      - 'page_explorer({}) - Auto-explore full page'
+      - 'page_explorer({"max_screenshots": 5}) - Limit to 5 captures'
+
+  # Search Tools
+  search_human:
+    name: "search_human"
+    description: "Perform web search to FIND websites or information you don't know the URL for. Uses browser automation with natural typing and mouse movements. IMPORTANT: Do NOT use this if you're already on the target website - instead use 'get_page_state', 'extract_text', and 'navigate' to explore the site directly. Only use search when you need to discover URLs or gather information from multiple sources. No API keys required."
+    category: "SEARCH"
+    safety_level: "SAFE"
+    parameters:
+      - name: "query"
+        type: "string"
+        description: "Search query"
+        required: true
+      - name: "engine"
+        type: "string"
+        description: "Search engine: 'google', 'duckduckgo', 'bing'"
+        required: false
+        default: "duckduckgo"
+      - name: "max_results"
+        type: "integer"
+        description: "Maximum number of results to extract (1-20)"
+        required: false
+        default: 10
+
+  search_api:
+    name: "search_api"
+    description: "Perform web search using API (faster but requires API key). Returns structured search results with titles, URLs, and snippets."
+    category: "SEARCH"
+    safety_level: "SAFE"
+    parameters:
+      - name: "query"
+        type: "string"
+        description: "Search query"
+        required: true
+      - name: "provider"
+        type: "string"
+        description: "Search provider: 'serpapi', 'brave'"
+        required: false
+        default: "brave"
+      - name: "num_results"
+        type: "integer"
+        description: "Number of results to return"
+        required: false
+        default: 10
+
+  search_rank:
+    name: "search_rank"
+    description: "Analyze and rank search results by relevance. Provides intelligent recommendations on which links to visit. Extracts key information from snippets."
+    category: "SEARCH"
+    safety_level: "SAFE"
+    parameters:
+      - name: "query"
+        type: "string"
+        description: "Original search query or user intent"
+        required: true
+      - name: "search_results"
+        type: "array"
+        description: "Array of search results to analyze (from search_human or search_api)"
+        required: true
+      - name: "goal"
+        type: "string"
+        description: "User's goal or what they want to accomplish"
+        required: true
+      - name: "top_n"
+        type: "integer"
+        description: "Number of top results to return (default: 5)"
+        required: false
+        default: 5
+
+metadata:
+  version: "1.2.0"
+  last_updated: "2026-01-24"
+  total_tools: 32
+  categories:
+    - SYSTEM
+    - NAVIGATION
+    - INTERACTION
+    - EXTRACTION
+    - SEARCH
+  safety_levels:
+    - SAFE
+    - MODERATE
+  notes: |
+    This centralized tool descriptions template ensures consistency across all tools.
+    Tools load their metadata from here to maintain single source of truth.
+    
+    Benefits:
+    - Easy bulk updates to tool descriptions
+    - Consistency checking across tools
+    - Centralized documentation
+    - Version control for tool metadata
+    - A/B testing tool descriptions
+    
+    Tool categories:
+    - SYSTEM (4): complete, fail, wait, ask_user
+    - NAVIGATION (4): navigate, go_back, go_forward, refresh
+    - INTERACTION (17): click, type_text, press_key, scroll, hover, select_option,
+        check_checkbox, focus, fill, wait_for_selector, double_click, right_click,
+        drag_and_drop, upload_file, evaluate_javascript, get_attribute, clear_input
+    - EXTRACTION (4): extract_text, screenshot, get_page_state, page_explorer
+    - SEARCH (3): search_human, search_api, search_rank

@@ -1,0 +1,155 @@
+# Copyright 2026 Firefly Software Solutions Inc
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: link_filter
+version: "1.0"
+description: >
+  LLM-based link filtering for site exploration. Dynamically identifies and filters
+  language variants, homepage duplicates, and redundant links without hardcoded patterns.
+
+system_template: |
+  You are an expert at analyzing website navigation links for a web crawler.
+
+  Your job is to identify which links lead to UNIQUE content vs which are DUPLICATES or VARIANTS.
+
+  ## WHAT TO ANALYZE
+  For each link, consider:
+  1. Does this URL lead to genuinely DIFFERENT content?
+  2. Is this the SAME content in a different form (language, region, format)?
+  3. Is this a homepage variant (e.g., /en/, /es/, /fr/ are often the same homepage in different languages)?
+
+  ## PATTERNS TO DETECT (use your understanding, not rigid rules):
+
+  **Language Variants** - SKIP these (same content, just translated):
+  - URLs with language codes in path: /en/, /es/, /fr/, /de/, /pt/, /zh/, /ja/, etc.
+  - URLs with language codes at root level (e.g., site.com/es/ = homepage in Spanish)
+  - Language switcher links (often labeled "EN", "ES", "Español", "English", etc.)
+  - Regional variants: /en-us/, /en-gb/, /pt-br/, /zh-cn/, etc.
+
+  **Homepage Variants** - SKIP if we already have the homepage:
+  - Root language paths like /es, /en, /pt are typically the HOMEPAGE in that language
+  - These contain the SAME content as the main homepage, just translated
+
+  **Duplicate Content** - SKIP:
+  - Same page with different URL structures
+  - Anchor links to sections within current page (#section)
+  - Print/PDF versions of same content
+
+  **Utility/Admin Pages** - SKIP:
+  - Login, logout, signup, register pages
+  - Cart, checkout, account settings
+  - Admin panels
+
+  ## KEEP:
+  - Pages with genuinely unique content
+  - Different sections/features of the site
+  - Content pages, product pages, articles
+  - About, Contact, Services, etc. (unique per site, not per language)
+
+  You MUST respond with a valid JSON object.
+
+user_template: |
+  Analyze these navigation links and determine which to visit vs skip:
+
+  ## Links to Analyze ({{ link_count }} new links):
+  {{ links_text }}
+  {% if current_url %}
+
+  ## Current Page URL: {{ current_url }}
+  {% endif %}
+  {% if task %}
+
+  ## User's Goal: {{ task }}
+  {% endif %}
+
+  ## Instructions:
+  Respond with EXACTLY these fields:
+  - "links_to_visit": array of {"url": "...", "text": "..."} - Links with UNIQUE content worth visiting
+  - "links_to_skip": array of {"url": "...", "text": "...", "reason": "..."} - Duplicates/variants to skip
+
+  Be thorough in identifying language variants and homepage duplicates. If a link like /es/ or /en/ appears to be a root-level language path, it's likely a homepage variant and should be skipped.
+
+required_variables:
+  - link_count
+  - links_text
+
+optional_variables:
+  current_url: null
+  task: null
+
+examples:
+  - input: |
+      Links:
+        - ES: https://example.com/es/
+        - EN: https://example.com/en/
+        - PT: https://example.com/pt/
+        - About: https://example.com/es/about
+        - Services: https://example.com/es/services
+        - Contact: https://example.com/es/contact
+      Current URL: https://example.com/
+    output: |
+      {
+        "links_to_visit": [
+          {"url": "https://example.com/es/about", "text": "About"},
+          {"url": "https://example.com/es/services", "text": "Services"},
+          {"url": "https://example.com/es/contact", "text": "Contact"}
+        ],
+        "links_to_skip": [
+          {"url": "https://example.com/es/", "text": "ES", "reason": "Homepage language variant - same content in Spanish"},
+          {"url": "https://example.com/en/", "text": "EN", "reason": "Homepage language variant - same content in English"},
+          {"url": "https://example.com/pt/", "text": "PT", "reason": "Homepage language variant - same content in Portuguese"}
+        ]
+      }
+
+  - input: |
+      Links:
+        - English: https://shop.com/en
+        - Deutsch: https://shop.com/de
+        - Français: https://shop.com/fr
+        - Products: https://shop.com/products
+        - FAQ: https://shop.com/faq
+        - Login: https://shop.com/login
+      Current URL: https://shop.com/
+    output: |
+      {
+        "links_to_visit": [
+          {"url": "https://shop.com/products", "text": "Products"},
+          {"url": "https://shop.com/faq", "text": "FAQ"}
+        ],
+        "links_to_skip": [
+          {"url": "https://shop.com/en", "text": "English", "reason": "Homepage language variant"},
+          {"url": "https://shop.com/de", "text": "Deutsch", "reason": "Homepage language variant - German"},
+          {"url": "https://shop.com/fr", "text": "Français", "reason": "Homepage language variant - French"},
+          {"url": "https://shop.com/login", "text": "Login", "reason": "Utility page - authentication"}
+        ]
+      }
+
+metadata:
+  category: agent
+  use_case: site_exploration
+  model_compatibility:
+    - gpt-4
+    - gpt-4-turbo
+    - gpt-4.1
+    - claude-3
+    - claude-3.5-sonnet
+    - claude-4-sonnet
+  tags:
+    - link-filtering
+    - site-exploration
+    - language-detection
+    - duplicate-detection
+  token_usage:
+    estimated_input: 500
+    estimated_output: 800

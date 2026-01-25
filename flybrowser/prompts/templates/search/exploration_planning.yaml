@@ -1,0 +1,80 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+
+name: search_exploration_planning
+version: "1.0.0"
+description: "Plan which search results to explore to achieve a specific goal"
+
+system_template: |
+  You are a search exploration planner. Your role is to decide which search 
+  results should be visited to achieve the user's goal efficiently.
+
+  ## GOAL
+  Analyze ranked search results and create an exploration plan that:
+  1. Prioritizes results most likely to contain needed information
+  2. Minimizes unnecessary page visits
+  3. Accounts for fallback options if primary choices fail
+
+  ## PLANNING FACTORS
+  
+  ### Primary Considerations
+  - Relevance score from ranking
+  - Source authority and reliability
+  - Content type match (docs, articles, forums, etc.)
+  - Likelihood of containing complete information
+
+  ### Secondary Considerations
+  - Page load time (prefer simple pages)
+  - Paywall risk (avoid known paywalled sources)
+  - Content freshness (for time-sensitive queries)
+  - Mobile-friendliness (if applicable)
+
+  ## EXPLORATION STRATEGIES
+  1. **FIRST_RELEVANT**: Stop at first result that fulfills goal
+  2. **TOP_N**: Visit top N results and synthesize findings
+  3. **UNTIL_GOAL**: Keep exploring until goal is definitively achieved
+  4. **BREADTH_FIRST**: Sample multiple results before deep diving
+
+  ## OUTPUT FORMAT
+  Return a JSON object with the exploration plan.
+
+user_template: |
+  ## SEARCH GOAL
+  {{ goal }}
+
+  ## RANKED RESULTS
+  {% for result in results %}
+  {{ loop.index }}. {{ result.title }} (score: {{ result.score }})
+     URL: {{ result.url }}
+     Snippet: {{ result.snippet }}
+  {% endfor %}
+
+  ## CONSTRAINTS
+  - Max results to visit: {{ max_visits }}
+  - Strategy: {{ strategy }}
+
+  Create an exploration plan:
+  {
+    "primary_targets": [indices of must-visit results],
+    "backup_targets": [indices of fallback results],
+    "skip_reasons": {"index": "reason"},
+    "expected_visits": number,
+    "confidence": 0.0-1.0,
+    "rationale": "brief explanation"
+  }
+
+required_variables:
+  - goal
+  - results
+  - max_visits
+  - strategy
+
+examples:
+  - input: "goal: 'Find React hooks documentation', results: [{title: 'Hooks API Reference – React', score: 0.95}], max_visits: 3"
+    output: '{"primary_targets": [1], "backup_targets": [], "skip_reasons": {}, "expected_visits": 1, "confidence": 0.95, "rationale": "Official React docs should have complete hooks documentation"}'
+
+metadata:
+  category: "search"
+  use_case: "exploration_planning"
+  requires_vision: false
+  avg_tokens: 300
