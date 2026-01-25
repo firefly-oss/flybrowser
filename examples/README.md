@@ -18,6 +18,14 @@ python examples/scraping/hackernews.py
 
 ## Examples by Category
 
+### Basic Examples (`basic/`)
+
+Quickstart and introductory examples.
+
+| File | Description |
+|------|-------------|
+| `quickstart.py` | Your first automation - navigate, interact, extract |
+
 ### Web Scraping (`scraping/`)
 
 Data extraction and scraping patterns.
@@ -40,12 +48,25 @@ Automated testing patterns.
 | `visual_testing.py` | Screenshot capture and visual checks |
 | `e2e_checkout.py` | End-to-end checkout flow testing |
 
+### Streaming & Recording (`streaming/`)
+
+Live streaming and session recording.
+
+| File | Description |
+|------|-------------|
+| `basic_streaming.py` | HLS/DASH streaming with web player |
+| `rtmp_streaming.py` | Stream to Twitch/YouTube via RTMP |
+| `recording.py` | Record browser sessions for tutorials |
+
 ### Workflow Automation (`workflows/`)
 
 Business process automation.
 
 | File | Description |
 |------|-------------|
+| `job_application.py` | Autonomous job application form filling |
+| `booking.py` | Restaurant reservation automation |
+| `research.py` | Competitor research and data gathering |
 | `invoice_processing.py` | Invoice download and extraction |
 | `report_generation.py` | Multi-source report compilation |
 | `data_sync.py` | Data synchronization between systems |
