@@ -44,9 +44,11 @@ server or a multi-node cluster. The SDK handles all complexity internally.
 from __future__ import annotations
 
 import base64
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from flybrowser.utils.logger import logger
+from flybrowser.utils.execution_logger import configure_execution_logger, LogVerbosity
+from flybrowser.agents.scope_validator import get_scope_validator
 
 
 class FlyBrowser:
@@ -83,13 +85,18 @@ class FlyBrowser:
         llm_provider: str = "openai",
         llm_model: Optional[str] = None,
         api_key: Optional[str] = None,
+        vision_enabled: Optional[bool] = None,
+        model_config: Optional[Dict[str, Any]] = None,
         headless: bool = True,
         browser_type: str = "chromium",
         recording_enabled: bool = False,
         pii_masking_enabled: bool = True,
         timeout: float = 30.0,
-        log_level: str = "INFO",
         pretty_logs: bool = True,
+        speed_preset: str = "balanced",
+        log_verbosity: str = "normal",
+        agent_config: Optional["AgentConfig"] = None,
+        config_file: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -102,51 +109,140 @@ class FlyBrowser:
                 - None: Embedded mode (local browser)
                 - "http://localhost:8000": Standalone server
                 - "http://cluster.example.com:8000": Cluster endpoint
-            llm_provider: LLM provider name (openai, anthropic, ollama)
-            llm_model: LLM model name (uses provider default if not specified)
+            llm_provider: LLM provider name (openai, anthropic, ollama, gemini)
+            llm_model: LLM model name. If not specified, uses provider default.
             api_key: API key for the LLM provider
+            vision_enabled: Override auto-detected vision capability (optional)
+                - None: Use auto-detected capabilities (default)
+                - True: Force vision enabled (useful if discovery fails to detect it)
+                - False: Force vision disabled (useful for testing text-only fallback)
+            model_config: Manual model configuration (optional)
+                Example: {"context_window": 128000, "max_output_tokens": 4096}
+                Additional configuration to pass to the provider
             headless: Run browser in headless mode (default: True)
             browser_type: Browser type (chromium, firefox, webkit)
             recording_enabled: Enable session recording (default: False)
             pii_masking_enabled: Enable PII masking (default: True)
             timeout: Request timeout in seconds for server mode (default: 30.0)
-            log_level: Logging level - DEBUG, INFO, WARNING, ERROR (default: INFO)
             pretty_logs: Use human-readable colored logs instead of JSON (default: True)
+            speed_preset: Performance preset - "fast", "balanced", or "thorough" (default: "balanced")
+                - "fast": Optimized for speed, shorter timeouts, fewer retries
+                - "balanced": Good balance of speed and reliability
+                - "thorough": More thorough, longer timeouts for complex pages
+            log_verbosity: Unified logging verbosity level (default: "normal")
+                Controls execution logs, Python log level, and LLM logging:
+                - "silent": Errors only, no LLM logging
+                - "minimal": Errors + warnings, no LLM logging
+                - "normal": Standard info logs, no LLM logging
+                - "verbose": Detailed execution + basic LLM timing
+                - "debug": Full technical details + detailed LLM prompts/responses
+            agent_config: AgentConfig instance for ReAct framework configuration.
+                If provided, this takes precedence over config_file.
+                Example: agent_config=AgentConfig(max_iterations=100)
+            config_file: Path to YAML or JSON config file for agent configuration.
+                Example: config_file="config.yaml"
+                If both agent_config and config_file are None, uses defaults.
             **kwargs: Additional configuration options
 
         Example - Embedded Mode:
             >>> browser = FlyBrowser(
             ...     llm_provider="openai",
+            ...     llm_model="gpt-4o",
             ...     api_key="sk-...",
-            ...     headless=True
             ... )
 
-        Example - Server Mode:
+        Example - Anthropic Claude:
             >>> browser = FlyBrowser(
-            ...     endpoint="http://localhost:8000",
-            ...     llm_provider="openai",
-            ...     api_key="sk-..."
+            ...     llm_provider="anthropic",
+            ...     llm_model="claude-3-5-sonnet-20241022",
+            ...     api_key="sk-ant-...",
+            ... )
+
+        Example - Local Ollama:
+            >>> browser = FlyBrowser(
+            ...     llm_provider="ollama",
+            ...     llm_model="qwen3:8b",
             ... )
         """
         self._endpoint = endpoint
         self._mode = "server" if endpoint else "embedded"
         self._started = False
 
+        # Configure performance settings based on speed preset
+        from flybrowser.core.performance import (
+            PerformanceConfig,
+            SpeedPreset,
+            set_performance_config,
+        )
+        
+        preset_map = {
+            "fast": SpeedPreset.FAST,
+            "balanced": SpeedPreset.BALANCED,
+            "thorough": SpeedPreset.THOROUGH,
+        }
+        preset = preset_map.get(speed_preset.lower(), SpeedPreset.BALANCED)
+        set_performance_config(PerformanceConfig.from_preset(preset))
+
         # Store configuration for both modes
         self._llm_provider = llm_provider
         self._llm_model = llm_model
         self._api_key = api_key
+        self._vision_enabled = vision_enabled
+        self._model_config = model_config
         self._headless = headless
         self._browser_type = browser_type
         self._recording_enabled = recording_enabled
         self._pii_masking_enabled = pii_masking_enabled
         self._timeout = timeout
+        self._speed_preset = speed_preset
         self._kwargs = kwargs
+        
+        # Load agent configuration
+        from flybrowser.agents.config import AgentConfig
+        
+        if agent_config is not None:
+            self._agent_config = agent_config
+            logger.info("Using provided AgentConfig")
+        elif config_file is not None:
+            # Load from YAML or JSON file
+            from pathlib import Path
+            config_path = Path(config_file)
+            if config_path.suffix in ('.yaml', '.yml'):
+                self._agent_config = AgentConfig.from_yaml(config_file)
+            elif config_path.suffix == '.json':
+                self._agent_config = AgentConfig.from_json(config_file)
+            else:
+                raise ValueError(f"Unsupported config file format: {config_path.suffix}. Use .yaml, .yml, or .json")
+            logger.info(f"Loaded agent configuration from {config_file}")
+        else:
+            # Use defaults with environment variable overrides
+            self._agent_config = AgentConfig()
+            self._agent_config.apply_env_overrides()
+            logger.info("Using default AgentConfig with environment overrides")
 
-        # Configure logging
+        # Unified logging configuration based on log_verbosity
+        # Maps verbosity to: (execution_verbosity, python_log_level, llm_logging_level)
+        verbosity_config = {
+            "silent": (LogVerbosity.SILENT, "ERROR", 0),
+            "minimal": (LogVerbosity.MINIMAL, "WARNING", 0),
+            "normal": (LogVerbosity.NORMAL, "INFO", 0),
+            "verbose": (LogVerbosity.VERBOSE, "INFO", 1),
+            "debug": (LogVerbosity.DEBUG, "DEBUG", 2),
+        }
+        exec_verbosity, log_level, llm_logging_level = verbosity_config.get(
+            log_verbosity.lower(), (LogVerbosity.NORMAL, "INFO", 0)
+        )
+        
+        # Store derived llm_logging for use in _start_embedded_mode
+        self._llm_logging = llm_logging_level
+        
+        # Configure Python logger (format + level)
         from flybrowser.utils.logger import configure_logging, LogFormat
         log_format = LogFormat.HUMAN if pretty_logs else LogFormat.JSON
         configure_logging(level=log_level, log_format=log_format)
+        
+        # Configure execution logger verbosity
+        configure_execution_logger(verbosity=exec_verbosity)
 
         # Mode-specific components (initialized in start())
         self._client = None  # HTTP client for server mode
@@ -157,7 +253,6 @@ class FlyBrowser:
         self.browser_manager = None
         self.page_controller = None
         self.element_detector = None
-        self.extraction_agent = None
         self.pii_handler = None
         self._screenshot_capture = None
         self._recording_manager = None
@@ -165,6 +260,9 @@ class FlyBrowser:
         self._local_stream_server = None
         self._local_stream_port = None
         self._active_stream_id = None
+        
+        # ReAct framework (native implementation)
+        self.react_agent = None
 
         logger.info(f"Initializing FlyBrowser in {self._mode} mode")
 
@@ -219,11 +317,6 @@ class FlyBrowser:
     async def _start_embedded_mode(self) -> None:
         """Start in embedded mode - run browser locally."""
         # Import components only when needed (embedded mode)
-        from flybrowser.agents.action_agent import ActionAgent
-        from flybrowser.agents.extraction_agent import ExtractionAgent
-        from flybrowser.agents.monitoring_agent import MonitoringAgent
-        from flybrowser.agents.navigation_agent import NavigationAgent
-        from flybrowser.agents.workflow_agent import WorkflowAgent
         from flybrowser.core.browser import BrowserManager
         from flybrowser.core.element import ElementDetector
         from flybrowser.core.page import PageController
@@ -234,57 +327,159 @@ class FlyBrowser:
         )
         from flybrowser.llm.factory import LLMProviderFactory
         from flybrowser.security.pii_handler import PIIConfig, PIIHandler
+        from flybrowser.core.performance import get_performance_config
 
-        # Initialize LLM provider
+        # Initialize LLM provider with simplified factory
+        logger.info("[SDK] Initializing LLM provider")
+        
+        # Build kwargs for create()
+        create_kwargs = {
+            "vision_enabled": self._vision_enabled,
+            "llm_logging": self._llm_logging,
+        }
+        
+        # Add model_config if provided
+        if self._model_config:
+            create_kwargs.update(self._model_config)
+        
+        # Create provider (always use simple create, no smart selection)
         self.llm = LLMProviderFactory.create(
             provider=self._llm_provider,
-            model=self._llm_model,
+            model=self._llm_model or "default",
             api_key=self._api_key,
+            **create_kwargs
         )
+        
+        # Trigger provider initialization if available
+        if hasattr(self.llm, 'initialize'):
+            await self.llm.initialize()
+        
+        # Log LLM configuration with discovered capabilities
+        model_info = self.llm.get_model_info()
+        
+        # Build selection info string
+        selection_info = ""
+        if not self._llm_model:
+            selection_info = " (provider default)"
+        
+        logger.info(f"LLM Provider: {self._llm_provider}")
+        logger.info(f"Model: {model_info.name}{selection_info}")
+        logger.info(f"Context Window: {model_info.context_window:,} tokens")
+        logger.info(f"Max Output Tokens: {model_info.max_output_tokens:,} tokens")
+        
+        # Log all capabilities detected for this model
+        from flybrowser.llm.base import ModelCapability
+        capability_names = [cap.value for cap in model_info.capabilities]
+        logger.info(f"Model Capabilities: {', '.join(capability_names)}")
+        
+        # Check and log vision capability - this is CRITICAL for proper operation
+        self._vision_enabled = self.llm.vision_enabled
+        if self._vision_enabled:
+            logger.info(f"Vision: [OK] ENABLED (model supports vision)")
+        else:
+            logger.warning(
+                f"Vision: [WARN] DISABLED (model {model_info.name} does not support vision). "
+                f"All vision features will use text-only fallback."
+            )
+        
+        # Log cost information if available
+        if (model_info.cost_per_1k_input_tokens is not None and 
+            model_info.cost_per_1k_input_tokens > 0):
+            logger.info(
+                f"Cost: ${model_info.cost_per_1k_input_tokens:.4f}/1K input, "
+                f"${model_info.cost_per_1k_output_tokens:.4f}/1K output"
+            )
+        else:
+            logger.info("Cost: Free (local model)")
+        
+        # Log performance configuration
+        perf_config = get_performance_config()
+        logger.info(f"Performance Preset: {self._speed_preset}")
+        logger.info(
+            f"Timeouts: navigation={perf_config.navigation_timeout_ms}ms, "
+            f"action={perf_config.action_timeout_ms}ms, "
+            f"element={perf_config.element_timeout_ms}ms"
+        )
+        logger.info(f"Wait Strategy: {perf_config.wait_strategy.value}")
+        logger.info(f"Max Retries: {perf_config.max_retries}")
 
-        # Initialize browser manager
+        # Initialize browser manager with stealth mode enabled
+        logger.info(f"Browser: {self._browser_type} (headless={self._headless}, stealth=True)")
         self.browser_manager = BrowserManager(
             headless=self._headless,
             browser_type=self._browser_type,
+            stealth=True,  # Enable anti-detection by default
         )
         await self.browser_manager.start()
 
         # Initialize PII handler first (needed by agents)
         pii_config = PIIConfig(enabled=self._pii_masking_enabled)
         self.pii_handler = PIIHandler(pii_config)
+        logger.info(f"PII Masking: {'enabled' if self._pii_masking_enabled else 'disabled'}")
 
         # Initialize components
         self.page_controller = PageController(self.browser_manager.page)
         self.element_detector = ElementDetector(self.browser_manager.page, self.llm)
-
-        # Initialize all agents with PII handler
-        self.extraction_agent = ExtractionAgent(
-            self.page_controller, self.element_detector, self.llm,
-            pii_handler=self.pii_handler
-        )
-        self.action_agent = ActionAgent(
-            self.page_controller, self.element_detector, self.llm,
-            pii_handler=self.pii_handler
-        )
-        self.navigation_agent = NavigationAgent(
-            self.page_controller, self.element_detector, self.llm,
-            pii_handler=self.pii_handler
-        )
-        self.workflow_agent = WorkflowAgent(
-            self.page_controller, self.element_detector, self.llm,
-            pii_handler=self.pii_handler
-        )
-        self.monitoring_agent = MonitoringAgent(
-            self.page_controller, self.element_detector, self.llm,
-            pii_handler=self.pii_handler
-        )
 
         # Initialize recording components if enabled
         if self._recording_enabled:
             recording_config = RecordingConfig(enabled=True)
             self._screenshot_capture = ScreenshotCapture(recording_config)
             self._recording_manager = RecordingManager(recording_config)
-            logger.info("Recording components initialized")
+            logger.info("Recording: enabled")
+        else:
+            logger.info("Recording: disabled")
+        
+        # Log LLM logging status
+        logger.info(f"LLM Logging: {'enabled' if self._llm_logging else 'disabled'}")
+        
+        # Initialize ReAct framework (now the native implementation)
+        await self._initialize_react_framework()
+
+    async def _initialize_react_framework(self) -> None:
+        """Initialize the new ReAct framework."""
+        from flybrowser.agents.sdk_integration import ReActBrowserAgent
+        from flybrowser.agents import ExecutionMode
+        
+        logger.info("Initializing ReAct framework...")
+        
+        # Create ReAct agent with autonomous mode and configuration
+        self.react_agent = ReActBrowserAgent(
+            page_controller=self.page_controller,
+            element_detector=self.element_detector,
+            llm_provider=self.llm,
+            agent_config=self._agent_config,
+            execution_mode=ExecutionMode.AUTONOMOUS,
+            enable_memory=True,
+        )
+        
+        # Initialize the agent (registers tools, creates orchestrator)
+        await self.react_agent.initialize()
+        
+        logger.info(
+            f"ReAct framework initialized: "
+            f"{len(self.react_agent.get_tool_list())} tools registered"
+        )
+    
+    def enable_llm_logging(self, enabled: bool = True, level: int = 1) -> None:
+        """
+        Enable or disable LLM request/response logging at runtime.
+
+        Args:
+            enabled: Whether to enable LLM logging (default: True)
+            level: Logging level when enabled (default: 1)
+                - 0: Disabled (same as enabled=False)
+                - 1: Basic (shows request/response timing)
+                - 2: Detailed (shows prompts and LLM responses/plans)
+
+        Example:
+            >>> browser.enable_llm_logging(True)  # Basic logging
+            >>> browser.enable_llm_logging(True, level=2)  # Detailed logging
+            >>> browser.enable_llm_logging(False)  # Disable logging
+        """
+        self._llm_logging = level if enabled else 0
+        if self.llm:
+            self.llm.enable_llm_logging(enabled, level)
 
     async def stop(self) -> None:
         """
@@ -351,7 +546,7 @@ class FlyBrowser:
         """
         Navigate using natural language instructions.
 
-        Uses the NavigationAgent for intelligent navigation with:
+        Uses the ReAct framework for intelligent navigation with:
         - Natural language understanding ("go to the login page")
         - Smart waiting for page loads
         - Automatic retry on navigation failures
@@ -373,79 +568,787 @@ class FlyBrowser:
         if self._mode == "server":
             return await self._client.navigate(self._session_id, instruction)
 
-        # Embedded mode: Use NavigationAgent
-        result = await self.navigation_agent.execute(instruction, use_vision=use_vision)
+        # Embedded mode: Use ReAct framework with NAVIGATE mode
+        from flybrowser.agents.types import OperationMode
+        result_dict = await self.react_agent.execute_task(
+            instruction,
+            max_iterations=10,
+            operation_mode=OperationMode.NAVIGATE,
+        )
+        
+        # Get current page state
+        current_url = await self.page_controller.get_url()
+        current_title = await self.page_controller.get_title()
+        
         return {
-            "success": result.success,
-            "url": result.url,
-            "title": result.title,
-            "navigation_type": result.navigation_type.value if result.navigation_type else None,
-            "error": result.error,
+            "success": result_dict.get("success", False),
+            "url": current_url,
+            "title": current_title,
+            "navigation_type": "react",
+            "error": result_dict.get("error"),
         }
 
     async def extract(
-        self, query: str, use_vision: bool = False, schema: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self,
+        query: str,
+        use_vision: bool = False,
+        schema: Optional[Dict[str, Any]] = None,
+        return_metadata: bool = True,
+        max_iterations: int = 15,
+    ) -> Union[Dict[str, Any], "AgentRequestResponse"]:
         """
         Extract data from the current page using natural language.
+        
+        Uses the ReAct framework for:
+        - Intelligent data extraction with reasoning
+        - Automatic obstacle detection and handling
+        - Extraction verification for data quality
+        - Schema-guided structured extraction
 
         Args:
             query: Natural language query describing what to extract.
-            use_vision: Use vision-based extraction (default: False)
+            use_vision: Use vision-based extraction (default: False).
+                Set to True for visually complex pages where text extraction
+                might miss important layout information.
             schema: Optional JSON schema for structured extraction.
+                When provided, the agent will return data matching this schema.
+            return_metadata: Return AgentRequestResponse with full metadata
+                including LLM usage and timing (default: True).
+            max_iterations: Maximum iterations for extraction (default: 15).
+                Extraction tasks are typically simpler than full agent tasks.
 
         Returns:
-            Dictionary containing the extracted data.
+            AgentRequestResponse with data and metadata (default), or
+            raw dictionary if return_metadata=False.
+            
+        Raises:
+            ValueError: If query is not a valid browser automation task
 
         Example:
-            >>> data = await browser.extract("What is the page title?")
+            >>> result = await browser.extract("What is the page title?")
+            >>> print(result)  # Shows just the data
+            >>> 
+            >>> # With schema for structured data
+            >>> result = await browser.extract(
+            ...     "Get the top 5 stories",
+            ...     schema={"type": "array", "items": {"type": "object"}}
+            ... )
         """
+        from flybrowser.agents.response import AgentRequestResponse, create_response
+        
         self._ensure_started()
+        
+        # Validate that this is a browser automation task
+        # SDK methods skip browser keyword check since extract() already defines the operation
+        validator = get_scope_validator()
+        is_valid, error = validator.validate_task(query, skip_browser_keyword_check=True)
+        if not is_valid:
+            raise ValueError(f"Invalid extraction query: {error}")
 
         if self._mode == "server":
             result = await self._client.extract(self._session_id, query, schema)
+            if return_metadata:
+                return create_response(
+                    success=result.get("success", True),
+                    data=result.get("data", result),
+                    operation="extract",
+                    query=query,
+                    llm_usage=result.get("llm_usage"),
+                    page_metrics=result.get("page_metrics"),
+                    timing=result.get("timing"),
+                    metadata=result,
+                )
             return result.get("data", result)
-        else:
-            result = await self.extraction_agent.execute(query, use_vision=use_vision, schema=schema)
-            # ExtractionAgent now returns {success, data, query} or error dict
-            # For backward compatibility, return the data directly if successful
-            if result.get("success"):
-                return result.get("data", result)
-            else:
-                # Return the full error dict so users can check success/error
-                return result
+        
+        # Embedded mode: Use ReAct framework with SCRAPE mode
+        # This is optimized for data extraction tasks
+        from flybrowser.agents.types import OperationMode
+        
+        logger.info(f"[extract] Extracting: {query[:100]}...")
+        
+        # Build extraction task - the agent will understand this is an extraction task
+        # and use appropriate tools (extract_text, screenshot for vision, etc.)
+        task = query
+        if schema:
+            import json
+            task = f"{query}\n\nReturn data matching this schema: {json.dumps(schema)}"
+        
+        # Determine vision override based on use_vision parameter
+        # For extraction, vision can help understand page layout and find data
+        # None = let agent decide based on model capabilities and operation mode
+        # True = force vision (useful for visually complex pages)
+        # False = text-only extraction (faster, cheaper)
+        vision_override = True if use_vision else None
+        
+        # Temporarily adjust max_iterations for extraction (typically simpler than full agent)
+        original_max_iterations = self.react_agent.config.max_iterations
+        if max_iterations != 15:  # User provided custom value
+            self.react_agent.config.max_iterations = max_iterations
+        
+        # Reset LLM session usage before execution to track only this operation
+        if hasattr(self.react_agent.llm, 'reset_session_usage'):
+            self.react_agent.llm.reset_session_usage()
+        
+        # CRITICAL: Store current page context in agent memory BEFORE execution
+        # This lets the agent know what page it's on (e.g., after browser.goto())
+        try:
+            current_url = await self.page_controller.get_url()
+            current_title = await self.page_controller.get_title()
+            if current_url:
+                self.react_agent.memory.working.set_scratch("current_url", current_url)
+                self.react_agent.memory.working.set_scratch("current_title", current_title or "")
+                logger.debug(f"[extract] Page context: {current_url} - {current_title}")
+        except Exception as e:
+            logger.debug(f"[extract] Could not get page context: {e}")
+        
+        try:
+            # Call execute() with SCRAPE mode - optimized for data extraction
+            agent_result = await self.react_agent.execute(
+                task,
+                operation_mode=OperationMode.SCRAPE,
+                vision_override=vision_override,
+            )
+            result_dict = agent_result.to_dict()
+            # Add max_iterations to metadata for proper display
+            result_dict["max_iterations"] = self.react_agent.config.max_iterations
+            # Add LLM usage statistics from the provider (tracked for this operation)
+            if hasattr(self.react_agent.llm, 'get_session_usage'):
+                result_dict["llm_usage"] = self.react_agent.llm.get_session_usage()
+            
+            if return_metadata:
+                return create_response(
+                    success=result_dict.get("success", False),
+                    data=result_dict.get("result"),
+                    error=result_dict.get("error"),
+                    operation="extract",
+                    query=query,
+                    llm_usage=result_dict.get("llm_usage"),
+                    metadata=result_dict,
+                )
+            
+            # Backward compatibility: return data directly if successful
+            if result_dict.get("success"):
+                return result_dict.get("result")
+            return {"success": False, "error": result_dict.get("error")}
+            
+        except Exception as e:
+            logger.error(f"[extract] Failed: {e}")
+            if return_metadata:
+                return create_response(
+                    success=False,
+                    data=None,
+                    error=str(e),
+                    operation="extract",
+                    query=query,
+                )
+            return {"success": False, "error": str(e)}
+        finally:
+            # Restore original config
+            self.react_agent.config.max_iterations = original_max_iterations
 
-    async def act(self, instruction: str, use_vision: bool = True) -> Dict[str, Any]:
+    async def act(
+        self,
+        instruction: str,
+        use_vision: bool = True,
+        return_metadata: bool = True,
+        max_iterations: int = 10,
+    ) -> Union[Dict[str, Any], "AgentRequestResponse"]:
         """
         Perform an action on the page based on natural language instruction.
-
-        Uses the ActionAgent for intelligent action execution with:
-        - Natural language understanding
+        
+        Uses the ReAct framework for:
+        - Intelligent action execution with reasoning
+        - Automatic obstacle detection and handling (cookie banners, modals)
+        - Action verification to ensure success
         - Multi-step action planning
         - Automatic retry on failure
         - PII-safe credential handling
 
         Args:
             instruction: Natural language instruction (e.g., "click the login button")
-            use_vision: Use vision for element detection (default: True)
+            use_vision: Use vision for element detection (default: True).
+                Vision helps accurately locate elements on the page.
+            return_metadata: Return AgentRequestResponse with full metadata
+                including LLM usage and timing (default: True).
+            max_iterations: Maximum iterations for action (default: 10).
+                Actions are typically quick, single-step operations.
 
         Returns:
-            ActionResult with execution details
+            AgentRequestResponse with data and metadata (default), or
+            raw dict if return_metadata=False.
+            
+        Raises:
+            ValueError: If instruction is not a valid browser automation task
 
         Example:
-            >>> await browser.act("click the login button")
-            >>> await browser.act("type 'hello' into the search box")
+            >>> result = await browser.act("click the login button")
+            >>> await browser.act("type 'hello' in the search box")
+            >>> await browser.act("scroll down")
         """
+        from flybrowser.agents.response import create_response
+        
         self._ensure_started()
+        
+        # Validate that this is a browser automation task
+        # SDK methods skip browser keyword check since act() already defines the operation
+        validator = get_scope_validator()
+        is_valid, error = validator.validate_task(instruction, skip_browser_keyword_check=True)
+        if not is_valid:
+            raise ValueError(f"Invalid action instruction: {error}")
 
         if self._mode == "server":
             result = await self._client.action(self._session_id, instruction)
+            if return_metadata:
+                return create_response(
+                    success=result.get("success", False),
+                    data=result,
+                    error=result.get("error"),
+                    operation="act",
+                    query=instruction,
+                    llm_usage=result.get("llm_usage"),
+                    page_metrics=result.get("page_metrics"),
+                    timing=result.get("timing"),
+                    metadata=result,
+                )
             return result
 
-        # Embedded mode: Use ActionAgent for intelligent action execution
-        result = await self.action_agent.execute(instruction, use_vision=use_vision)
-        # ActionAgent.execute() already returns a dict
-        return result
+        # Embedded mode: Use ReAct framework with EXECUTE mode
+        # This is optimized for fast, targeted actions (click, type, etc.)
+        from flybrowser.agents.types import OperationMode
+        
+        logger.info(f"[act] Executing action: {instruction[:100]}...")
+        
+        # Determine vision override based on use_vision parameter
+        # For act(), vision helps with element detection and verification
+        # True (default) = use vision to find elements accurately
+        # False = text-only mode (faster but may miss visual elements)
+        vision_override = use_vision if use_vision is not None else None
+        
+        # Temporarily adjust max_iterations for actions (typically quick operations)
+        original_max_iterations = self.react_agent.config.max_iterations
+        if max_iterations != 10:  # User provided custom value
+            self.react_agent.config.max_iterations = max_iterations
+        
+        # Reset LLM session usage before execution to track only this operation
+        if hasattr(self.react_agent.llm, 'reset_session_usage'):
+            self.react_agent.llm.reset_session_usage()
+        
+        # CRITICAL: Store current page context in agent memory BEFORE execution
+        try:
+            current_url = await self.page_controller.get_url()
+            current_title = await self.page_controller.get_title()
+            if current_url:
+                self.react_agent.memory.working.set_scratch("current_url", current_url)
+                self.react_agent.memory.working.set_scratch("current_title", current_title or "")
+                logger.debug(f"[act] Page context: {current_url} - {current_title}")
+        except Exception as e:
+            logger.debug(f"[act] Could not get page context: {e}")
+        
+        try:
+            # Call execute() with EXECUTE mode - optimized for actions
+            agent_result = await self.react_agent.execute(
+                instruction,
+                operation_mode=OperationMode.EXECUTE,
+                vision_override=vision_override,
+            )
+            result_dict = agent_result.to_dict()
+            # Add max_iterations to metadata for proper display
+            result_dict["max_iterations"] = self.react_agent.config.max_iterations
+            # Add LLM usage statistics from the provider (tracked for this operation)
+            if hasattr(self.react_agent.llm, 'get_session_usage'):
+                result_dict["llm_usage"] = self.react_agent.llm.get_session_usage()
+            
+            if return_metadata:
+                return create_response(
+                    success=result_dict.get("success", False),
+                    data=result_dict.get("result"),
+                    error=result_dict.get("error"),
+                    operation="act",
+                    query=instruction,
+                    llm_usage=result_dict.get("llm_usage"),
+                    metadata=result_dict,
+                )
+            
+            return {
+                "success": result_dict.get("success", False),
+                "data": result_dict.get("result"),
+                "error": result_dict.get("error"),
+            }
+            
+        except Exception as e:
+            logger.error(f"[act] Failed: {e}")
+            if return_metadata:
+                return create_response(
+                    success=False,
+                    data=None,
+                    error=str(e),
+                    operation="act",
+                    query=instruction,
+                )
+            return {"success": False, "data": None, "error": str(e)}
+        finally:
+            # Restore original config
+            self.react_agent.config.max_iterations = original_max_iterations
+
+    async def execute_task(
+        self,
+        task: str,
+    ) -> Dict[str, Any]:
+        """
+        Execute a complex task using the ReAct framework with reasoning and action.
+
+        This is a powerful way to automate browser tasks. It uses:
+        - Chain-of-thought reasoning to plan multi-step actions
+        - Step-by-step execution with verification after each step
+        - Intelligent retry with plan adaptation on failures
+        - Automatic obstacle handling
+
+        Args:
+            task: Natural language description of what to accomplish
+
+        Returns:
+            ExecutionResult dict containing:
+            - success: Whether the task completed successfully
+            - result: Any extracted data or result (for extraction tasks)
+            - error: Error details if failed
+            - steps: List of steps executed
+            - total_iterations: Number of iterations used
+            - execution_time_ms: Total execution time
+            
+        Raises:
+            ValueError: If task is not a valid browser automation task
+
+        Example:
+            >>> # Navigate and extract
+            >>> result = await browser.execute_task("Go to google.com and search for 'python'")
+            >>> 
+            >>> # Extract data with verification
+            >>> result = await browser.execute_task(
+            ...     "Extract the titles and scores of the top 10 stories from hackernews"
+            ... )
+            >>> if result["success"]:
+            ...     print(result["result"])
+        """
+        self._ensure_started()
+        
+        # Validate that this is a browser automation task
+        # SDK methods skip browser keyword check since execute_task() already defines the operation
+        validator = get_scope_validator()
+        is_valid, error = validator.validate_task(task, skip_browser_keyword_check=True)
+        if not is_valid:
+            raise ValueError(f"Invalid task: {error}")
+
+        if self._mode == "server":
+            # Server mode: use orchestrator API endpoint if available
+            try:
+                response = await self._client._request(
+                    "POST",
+                    f"/sessions/{self._session_id}/execute",
+                    json={"task": task},
+                )
+                return response or {}
+            except Exception:
+                # Fallback to action if execute endpoint not available
+                return await self._client.action(self._session_id, task)
+
+        # Embedded mode: Use ReAct framework with AUTO mode (uses planning)
+        from flybrowser.agents.types import OperationMode
+        
+        # Call execute() - uses agent's configured max_iterations with AUTO mode
+        agent_result = await self.react_agent.execute(
+            task,
+            operation_mode=OperationMode.AUTO,
+        )
+        return agent_result.to_dict()
+    
+    async def agent(
+        self,
+        task: str,
+        context: Optional[Dict[str, Any]] = None,
+        max_iterations: int = 50,
+        max_time_seconds: float = 1800.0,
+        return_metadata: bool = True,
+    ) -> Union[Dict[str, Any], "AgentRequestResponse"]:
+        """
+        Execute autonomous multi-step tasks with intelligent reasoning.
+        
+        This is the primary method for complex, multi-step browser automation.
+        The agent automatically selects the optimal reasoning strategy based
+        on task complexity and adapts dynamically during execution.
+        
+        Capabilities:
+        - Complex multi-step tasks ("Search X and summarize")
+        - Multi-page navigation and data collection
+        - Form filling with validation
+        - Intelligent navigation and interaction
+        - Automatic obstacle handling (cookie banners, modals)
+        - Dynamic strategy adaptation based on failures
+        - Multi-tool orchestration (32 browser tools)
+        - Memory-based context retention
+        
+        Args:
+            task: High-level task description in natural language.
+            context: Optional context dict (e.g., {"budget": 1000}).
+            max_iterations: Maximum execution iterations (default: 50).
+            max_time_seconds: Maximum execution time in seconds (default: 1800).
+            return_metadata: Return AgentRequestResponse with full metadata.
+        
+        Returns:
+            AgentRequestResponse with comprehensive execution metadata.
+            
+        Example:
+            >>> result = await browser.agent("Search for flights to Tokyo and extract the cheapest option")
+            >>> print(result.data)  # Extracted flight info
+            >>> 
+            >>> # With context
+            >>> result = await browser.agent(
+            ...     "Book a hotel room",
+            ...     context={"check_in": "2024-03-01", "nights": 3}
+            ... )
+        """
+        from flybrowser.agents.response import AgentRequestResponse, create_response
+        
+        self._ensure_started()
+        
+        # Validate that this is a browser automation task
+        # SDK methods skip browser keyword check since agent() already defines the operation
+        validator = get_scope_validator()
+        is_valid, error = validator.validate_task(task, skip_browser_keyword_check=True)
+        if not is_valid:
+            raise ValueError(f"Invalid task: {error}")
+        
+        if self._mode == "server":
+            # Server mode: use agent endpoint
+            try:
+                response = await self._client._request(
+                    "POST",
+                    f"/sessions/{self._session_id}/agent",
+                    json={
+                        "task": task,
+                        "context": context,
+                        "max_iterations": max_iterations,
+                        "max_time_seconds": max_time_seconds,
+                    },
+                )
+                result = response or {}
+                if return_metadata:
+                    return create_response(
+                        success=result.get("success", False),
+                        data=result.get("result_data"),
+                        error=result.get("error_message"),
+                        operation="agent",
+                        query=task,
+                        llm_usage=result.get("cost_tracking"),
+                        execution=result.get("execution"),
+                        history=result.get("execution_history"),
+                        metadata=result,
+                    )
+                return result
+            except Exception:
+                # Fallback to execute_task if agent endpoint not available
+                return await self.execute_task(task)
+        
+        # Embedded mode: Use ReAct framework (native implementation)
+        logger.info("[ReAct] Using ReAct framework for autonomous execution")
+        
+        # Temporarily update agent config for this execution if user provided custom limits
+        original_max_iterations = self.react_agent.config.max_iterations
+        original_timeout = self.react_agent.config.timeout_seconds
+        
+        if max_iterations != 50:  # User provided custom value
+            self.react_agent.config.max_iterations = max_iterations
+        if max_time_seconds != 1800.0:  # User provided custom value
+            self.react_agent.config.timeout_seconds = max_time_seconds
+        
+        # Reset LLM session usage before execution to track only this operation
+        if hasattr(self.react_agent.llm, 'reset_session_usage'):
+            self.react_agent.llm.reset_session_usage()
+        
+        # CRITICAL: Store current page context in agent memory BEFORE execution
+        try:
+            current_url = await self.page_controller.get_url()
+            current_title = await self.page_controller.get_title()
+            if current_url:
+                self.react_agent.memory.working.set_scratch("current_url", current_url)
+                self.react_agent.memory.working.set_scratch("current_title", current_title or "")
+                logger.debug(f"[agent] Page context: {current_url} - {current_title}")
+        except Exception as e:
+            logger.debug(f"[agent] Could not get page context: {e}")
+        
+        try:
+            # Call execute() - uses agent's configured max_iterations and timeout with AUTO mode
+            from flybrowser.agents.types import OperationMode
+
+            agent_result = await self.react_agent.execute(
+                task,
+                operation_mode=OperationMode.AUTO,
+            )
+            result_dict = agent_result.to_dict()
+            # Add max_iterations to metadata for proper display
+            result_dict["max_iterations"] = self.react_agent.config.max_iterations
+            # Add LLM usage statistics from the provider (tracked for this operation)
+            if hasattr(self.react_agent.llm, 'get_session_usage'):
+                result_dict["llm_usage"] = self.react_agent.llm.get_session_usage()
+        finally:
+            # Restore original config
+            self.react_agent.config.max_iterations = original_max_iterations
+            self.react_agent.config.timeout_seconds = original_timeout
+        
+        if return_metadata:
+            # Convert dict to AgentRequestResponse
+            return create_response(
+                success=result_dict.get("success", False),
+                data=result_dict.get("result"),
+                error=result_dict.get("error"),
+                operation="agent",
+                query=task,
+                llm_usage=result_dict.get("llm_usage"),
+                metadata=result_dict,
+            )
+        return result_dict
+    
+    async def observe(
+        self,
+        query: str,
+        return_selectors: bool = True,
+        return_metadata: bool = True,
+        max_iterations: int = 10,
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]], "AgentRequestResponse"]:
+        """
+        Observe and identify elements on the current page.
+        
+        Analyzes the page to find elements matching a natural language description.
+        Returns selectors, element info, and actionable suggestions.
+        
+        Use this to:
+        - Find elements before acting on them
+        - Understand page structure
+        - Get reliable selectors for automation
+        - Verify elements exist before interaction
+        
+        Args:
+            query: Natural language description of what to find.
+                Example: "find the search bar", "locate all product cards"
+            return_selectors: Include CSS selectors in response (default: True).
+            return_metadata: Return AgentRequestResponse with full metadata.
+            max_iterations: Maximum iterations for observation (default: 10).
+        
+        Returns:
+            List of observed elements with selectors and descriptions.
+            
+        Example:
+            >>> # Find a specific element
+            >>> elements = await browser.observe("find the login button")
+            >>> print(elements[0]["selector"])  # '#login-btn'
+            >>> 
+            >>> # Use with act() for reliable automation
+            >>> login_btn = await browser.observe("find the login button")
+            >>> if login_btn:
+            ...     await browser.act(f"click {login_btn[0]['selector']}")
+        """
+        from flybrowser.agents.response import create_response
+        
+        self._ensure_started()
+        
+        if self._mode == "server":
+            try:
+                response = await self._client._request(
+                    "POST",
+                    f"/sessions/{self._session_id}/observe",
+                    json={"query": query, "return_selectors": return_selectors},
+                )
+                result = response or {}
+                if return_metadata:
+                    return create_response(
+                        success=result.get("success", True),
+                        data=result.get("elements", result),
+                        operation="observe",
+                        query=query,
+                        metadata=result,
+                    )
+                return result.get("elements", result)
+            except Exception:
+                pass  # Fall through to embedded implementation
+        
+        # Embedded mode: Use ReAct framework with RESEARCH mode for intelligent element finding
+        # This mode is optimized for discovering and understanding page elements
+        from flybrowser.agents.types import OperationMode
+        
+        logger.info(f"[observe] Finding elements: {query[:100]}...")
+        
+        try:
+            # First, try element detector for fast results (if available)
+            if self.element_detector:
+                try:
+                    element_info = await self.element_detector.find_element(query)
+                    
+                    if element_info and element_info.get("selector"):
+                        page_state = await self.page_controller.get_page_state()
+                        elements = [{
+                            "description": query,
+                            "selector": element_info.get("selector"),
+                            "selector_type": element_info.get("selector_type", "css"),
+                            "confidence": element_info.get("confidence", 0.8),
+                            "tag": element_info.get("tag"),
+                            "text": element_info.get("text", "")[:100],
+                            "attributes": element_info.get("attributes", {}),
+                            "visible": element_info.get("visible", True),
+                            "actionable": element_info.get("actionable", True),
+                        }]
+                        
+                        logger.info(f"[observe] Element detector found {len(elements)} element(s)")
+                        
+                        if return_metadata:
+                            return create_response(
+                                success=True,
+                                data=elements,
+                                operation="observe",
+                                query=query,
+                                metadata={"page_url": page_state.get("url"), "elements_found": len(elements), "method": "element_detector"},
+                            )
+                        return elements
+                except Exception as e:
+                    logger.debug(f"[observe] Element detector failed, falling back to agent: {e}")
+            
+            # Fallback: Use ReAct agent with RESEARCH mode to intelligently find elements
+            # The agent will use vision and page analysis to locate elements
+            task = f"Find and identify all elements matching: {query}. For each element found, provide its CSS selector, a description, tag name, visible text, and whether it can be interacted with (clicked, typed into, etc.)."
+            
+            # Temporarily adjust max_iterations for observation
+            original_max_iterations = self.react_agent.config.max_iterations
+            if max_iterations != 10:  # User provided custom value
+                self.react_agent.config.max_iterations = max_iterations
+            
+            # Reset LLM session usage before execution to track only this operation
+            if hasattr(self.react_agent.llm, 'reset_session_usage'):
+                self.react_agent.llm.reset_session_usage()
+            
+            # CRITICAL: Store current page context in agent memory BEFORE execution
+            try:
+                current_url = await self.page_controller.get_url()
+                current_title = await self.page_controller.get_title()
+                if current_url:
+                    self.react_agent.memory.working.set_scratch("current_url", current_url)
+                    self.react_agent.memory.working.set_scratch("current_title", current_title or "")
+                    logger.debug(f"[observe] Page context: {current_url} - {current_title}")
+            except Exception as e:
+                logger.debug(f"[observe] Could not get page context: {e}")
+            
+            try:
+                agent_result = await self.react_agent.execute(
+                    task,
+                    operation_mode=OperationMode.RESEARCH,  # RESEARCH mode for discovery
+                    vision_override=True,  # Always use vision for observe to see the page
+                )
+                result_dict = agent_result.to_dict()
+                # Add max_iterations to metadata for proper display
+                result_dict["max_iterations"] = self.react_agent.config.max_iterations
+                # Add LLM usage statistics from the provider (tracked for this operation)
+                if hasattr(self.react_agent.llm, 'get_session_usage'):
+                    result_dict["llm_usage"] = self.react_agent.llm.get_session_usage()
+                
+                # Parse agent result into element list format
+                elements = result_dict.get("result", [])
+                if not isinstance(elements, list):
+                    elements = [elements] if elements else []
+                
+                logger.info(f"[observe] Agent found {len(elements)} element(s)")
+                
+                if return_metadata:
+                    return create_response(
+                        success=result_dict.get("success", False) and len(elements) > 0,
+                        data=elements,
+                        operation="observe",
+                        query=query,
+                        llm_usage=result_dict.get("llm_usage"),
+                        metadata={**result_dict, "method": "react_agent"},
+                    )
+                return elements
+            finally:
+                # Restore original config
+                self.react_agent.config.max_iterations = original_max_iterations
+            
+        except Exception as e:
+            logger.error(f"[observe] Failed: {e}")
+            if return_metadata:
+                return create_response(
+                    success=False,
+                    data=[],
+                    error=str(e),
+                    operation="observe",
+                    query=query,
+                )
+            return []
+
+    # ==================== Batch Operations ====================
+    
+    async def batch_execute(
+        self,
+        tasks: List[str],
+        parallel: bool = False,
+        stop_on_failure: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Execute multiple tasks in batch.
+        
+        Args:
+            tasks: List of task descriptions to execute
+            parallel: Whether to execute tasks in parallel (default: False)
+            stop_on_failure: Whether to stop on first failure (default: False)
+            
+        Returns:
+            List of ExecutionResult dicts, one per task
+            
+        Example:
+            >>> results = await browser.batch_execute([
+            ...     "Navigate to page A and extract title",
+            ...     "Navigate to page B and extract title",
+            ... ], parallel=True)
+        """
+        self._ensure_started()
+        
+        if self._mode == "server":
+            # Server mode: sequential execution via API
+            results = []
+            for task in tasks:
+                result = await self.execute_task(task)
+                results.append(result)
+                if stop_on_failure and not result.get("success"):
+                    break
+            return results
+        
+        # Embedded mode: Use ReAct framework with AUTO mode
+        from flybrowser.agents.types import OperationMode
+
+        if parallel:
+            # Execute tasks in parallel using asyncio.gather
+            import asyncio
+
+            async def execute_with_error_handling(task: str) -> Dict[str, Any]:
+                try:
+                    return await self.react_agent.execute_task(
+                        task,
+                        max_iterations=25,
+                        operation_mode=OperationMode.AUTO,
+                    )
+                except Exception as e:
+                    return {"success": False, "error": str(e), "result": None}
+
+            results = await asyncio.gather(*[execute_with_error_handling(task) for task in tasks])
+            return list(results)
+        else:
+            # Sequential execution
+            results = []
+            for task in tasks:
+                result = await self.react_agent.execute_task(
+                    task,
+                    max_iterations=25,
+                    operation_mode=OperationMode.AUTO,
+                )
+                results.append(result)
+                if stop_on_failure and not result.get("success"):
+                    break
+            return results
 
     async def screenshot(self, full_page: bool = False, mask_pii: bool = True) -> Dict[str, Any]:
         """
@@ -554,8 +1457,11 @@ class FlyBrowser:
     async def start_stream(
         self,
         protocol: str = "hls",
-        quality: str = "medium",
+        quality: str = "high",
         codec: str = "h264",
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        frame_rate: Optional[int] = None,
         rtmp_url: Optional[str] = None,
         rtmp_key: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -564,8 +1470,18 @@ class FlyBrowser:
 
         Args:
             protocol: Streaming protocol (hls, dash, rtmp)
-            quality: Quality profile (low_bandwidth, medium, high)
+            quality: Quality profile - one of:
+                - low_bandwidth: 500kbps, for slow connections
+                - medium: 1.5Mbps, balanced
+                - high: 3Mbps, high quality (default)
+                - ultra_high: 6Mbps, maximum quality
+                - local_high: 12Mbps, optimized for localhost/LAN
+                - local_4k: 25Mbps, 4K quality for localhost
+                - studio: 50Mbps, near-lossless production
             codec: Video codec (h264, h265, vp9)
+            width: Video width in pixels (default: 1920 for most profiles)
+            height: Video height in pixels (default: 1080 for most profiles)
+            frame_rate: Frames per second (default: 30)
             rtmp_url: RTMP destination URL (for RTMP protocol)
             rtmp_key: RTMP stream key
 
@@ -573,9 +1489,16 @@ class FlyBrowser:
             Dictionary with stream URLs and stream_id
 
         Example:
-            >>> stream = await browser.start_stream(protocol="hls", quality="medium")
+            >>> # Standard 1080p streaming
+            >>> stream = await browser.start_stream(protocol="hls", quality="high")
             >>> print(stream["hls_url"])
-            >>> # View stream in player
+            
+            >>> # 4K streaming for localhost
+            >>> stream = await browser.start_stream(
+            ...     quality="local_4k",
+            ...     width=3840,
+            ...     height=2160
+            ... )
             >>> await browser.stop_stream()
         """
         self._ensure_started()
@@ -588,6 +1511,9 @@ class FlyBrowser:
                     "protocol": protocol,
                     "quality": quality,
                     "codec": codec,
+                    "width": width,
+                    "height": height,
+                    "frame_rate": frame_rate,
                     "rtmp_url": rtmp_url,
                     "rtmp_key": rtmp_key,
                 },
@@ -595,7 +1521,9 @@ class FlyBrowser:
             return response or {}
         else:
             # Embedded mode: Start local streaming
-            return await self._start_embedded_stream(protocol, quality, codec, rtmp_url, rtmp_key)
+            return await self._start_embedded_stream(
+                protocol, quality, codec, width, height, frame_rate, rtmp_url, rtmp_key
+            )
 
     async def stop_stream(self) -> Dict[str, Any]:
         """
@@ -800,102 +1728,59 @@ class FlyBrowser:
             return masker.mask_text(text)
         else:
             return self.pii_handler.mask_for_llm(text)
-
-    # Workflow methods
-    async def run_workflow(
-        self,
-        workflow_definition: Union[str, Dict[str, Any]],
-        variables: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    
+    def get_usage_summary(self) -> Dict[str, Any]:
         """
-        Execute a multi-step workflow.
-
-        Uses the WorkflowAgent for complex automation tasks with:
-        - Multi-step execution with dependencies
-        - Variable substitution and state management
-        - Conditional logic and loops
-        - Error handling and recovery
-
-        Args:
-            workflow_definition: Workflow as YAML/JSON string or dict
-            variables: Variables to substitute in the workflow
-
+        Get accumulated LLM usage statistics for this session.
+        
+        This returns the total tokens, cost, and API calls made across
+        all operations in this browser session.
+        
         Returns:
-            WorkflowResult with execution details
-
+            Dictionary with session usage statistics:
+            - prompt_tokens: Total input tokens
+            - completion_tokens: Total output tokens
+            - total_tokens: Total tokens used
+            - cost_usd: Total cost in USD
+            - calls_count: Number of API calls
+            - cached_calls: Number of cached responses
+            - model: Primary model used
+        
         Example:
-            >>> workflow = '''
-            ... name: login_workflow
-            ... steps:
-            ...   - name: navigate
-            ...     action: goto
-            ...     url: https://example.com/login
-            ...   - name: fill_email
-            ...     action: type
-            ...     selector: "#email"
-            ...     value: "{{email}}"
-            ...   - name: submit
-            ...     action: click
-            ...     selector: "#submit"
-            ... '''
-            >>> result = await browser.run_workflow(workflow, {"email": "user@example.com"})
+            >>> async with FlyBrowser(...) as browser:
+            ...     await browser.extract("Get title")
+            ...     await browser.act("Click button")
+            ...     usage = browser.get_usage_summary()
+            ...     print(f"Total cost: ${usage['cost_usd']:.4f}")
+            ...     print(f"Total tokens: {usage['total_tokens']:,}")
         """
-        self._ensure_started()
-
         if self._mode == "server":
-            response = await self._client._request(
-                "POST",
-                f"/sessions/{self._session_id}/workflow",
-                json={"workflow": workflow_definition, "variables": variables or {}},
-            )
-            return response or {}
-
-        # Embedded mode: Use WorkflowAgent
-        # WorkflowAgent.execute() now returns a dict directly
-        return await self.workflow_agent.execute(workflow_definition, variables=variables)
-
-    async def monitor(
-        self,
-        condition: str,
-        timeout: float = 30.0,
-        poll_interval: float = 0.5,
-    ) -> Dict[str, Any]:
-        """
-        Monitor the page for a condition to be met.
-
-        Uses the MonitoringAgent for intelligent page monitoring with:
-        - Natural language condition specification
-        - Configurable timeout and polling
-        - Element appearance/disappearance detection
-        - Content change detection
-
-        Args:
-            condition: Natural language condition to wait for
-            timeout: Maximum time to wait in seconds (default: 30)
-            poll_interval: Time between checks in seconds (default: 0.5)
-
-        Returns:
-            MonitoringResult with details
-
-        Example:
-            >>> await browser.monitor("wait for the loading spinner to disappear")
-            >>> await browser.monitor("wait for 'Success' message to appear")
-        """
-        self._ensure_started()
-
-        if self._mode == "server":
-            response = await self._client._request(
-                "POST",
-                f"/sessions/{self._session_id}/monitor",
-                json={"condition": condition, "timeout": timeout, "poll_interval": poll_interval},
-            )
-            return response or {}
-
-        # Embedded mode: Use MonitoringAgent
-        # MonitoringAgent.execute() now returns a dict directly
-        return await self.monitoring_agent.execute(
-            condition, max_duration=timeout, poll_interval=poll_interval
-        )
+            # Server mode: we don't have direct access to LLM usage
+            # Return empty summary
+            return {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
+                "calls_count": 0,
+                "cached_calls": 0,
+                "model": "",
+                "note": "Usage tracking not available in server mode",
+            }
+        
+        # Embedded mode: get from LLM provider
+        if self.llm:
+            return self.llm.get_session_usage()
+        
+        return {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost_usd": 0.0,
+            "calls_count": 0,
+            "cached_calls": 0,
+            "model": "",
+        }
 
     # Embedded streaming implementation methods
     async def _start_embedded_stream(
@@ -903,6 +1788,9 @@ class FlyBrowser:
         protocol: str,
         quality: str,
         codec: str,
+        width: Optional[int],
+        height: Optional[int],
+        frame_rate: Optional[int],
         rtmp_url: Optional[str],
         rtmp_key: Optional[str],
     ) -> Dict[str, Any]:
@@ -915,7 +1803,17 @@ class FlyBrowser:
         from flybrowser.core.ffmpeg_recorder import VideoCodec, FFmpegRecorder, QualityProfile
         from flybrowser.service.streaming import StreamingManager, StreamingProtocol
         
+        logger.info(
+            f"[EMBEDDED_STREAM] Starting embedded stream\n"
+            f"  Protocol: {protocol}\n"
+            f"  Quality: {quality}\n"
+            f"  Codec: {codec}\n"
+            f"  Resolution: {width}x{height} (custom: {width is not None or height is not None})\n"
+            f"  Frame Rate: {frame_rate or 'default'}"
+        )
+        
         if self._active_stream_id:
+            logger.error(f"[EMBEDDED_STREAM] Stream already active: {self._active_stream_id}")
             raise RuntimeError("Stream already active. Stop current stream first.")
         
         # Create temporary output directory for streams FIRST
@@ -961,34 +1859,62 @@ class FlyBrowser:
             from flybrowser.service.streaming import StreamConfig
             from flybrowser.core.ffmpeg_recorder import QualityProfile
             
-            # Map quality string to QualityProfile enum
+            # Map quality string to QualityProfile enum (including new profiles)
             quality_map = {
+                "ultra_low_latency": QualityProfile.ULTRA_LOW_LATENCY,
                 "low_bandwidth": QualityProfile.LOW_BANDWIDTH,
                 "medium": QualityProfile.MEDIUM,
                 "high": QualityProfile.HIGH,
+                "ultra_high": QualityProfile.ULTRA_HIGH,
                 "lossless": QualityProfile.LOSSLESS,
+                "local_high": QualityProfile.LOCAL_HIGH,
+                "local_4k": QualityProfile.LOCAL_4K,
+                "studio": QualityProfile.STUDIO,
             }
-            quality_profile = quality_map.get(quality.lower(), QualityProfile.MEDIUM)
+            quality_profile = quality_map.get(quality.lower(), QualityProfile.HIGH)
             
-            config = StreamConfig(
-                protocol=stream_protocol,
-                quality_profile=quality_profile,  # Correct parameter name
-                codec=video_codec,
-                rtmp_url=rtmp_url,
-                rtmp_key=rtmp_key,
-            )
+            # Build config with optional resolution overrides
+            config_kwargs = {
+                "protocol": stream_protocol,
+                "quality_profile": quality_profile,
+                "codec": video_codec,
+                "rtmp_url": rtmp_url,
+                "rtmp_key": rtmp_key,
+            }
+            
+            # Apply resolution if specified
+            if width is not None:
+                config_kwargs["width"] = width
+            if height is not None:
+                config_kwargs["height"] = height
+            if frame_rate is not None:
+                config_kwargs["frame_rate"] = frame_rate
+            
+            config = StreamConfig(**config_kwargs)
             
             # Validate prerequisites
             if not self.browser_manager:
+                logger.error("[EMBEDDED_STREAM] Browser not initialized")
                 raise RuntimeError("Browser not initialized. Call start() first.")
             
             # Get page from browser_manager
             try:
                 page = self.browser_manager.page
+                logger.info(f"[EMBEDDED_STREAM] Got page from browser_manager")
             except Exception as e:
+                logger.error(f"[EMBEDDED_STREAM] Page not available: {e}")
                 raise RuntimeError(f"Page not available: {e}")
             
+            # Detect browser type for logging
+            try:
+                browser = page.context.browser
+                browser_type = browser.browser_type.name if browser else "unknown"
+                logger.info(f"[EMBEDDED_STREAM] Browser type: {browser_type}")
+            except Exception:
+                logger.info(f"[EMBEDDED_STREAM] Browser type: unknown")
+            
             # Create and start stream
+            logger.info(f"[EMBEDDED_STREAM] Creating stream via StreamingManager...")
             stream_info = await self._streaming_manager.create_stream(
                 session_id=self._session_id or "embedded",
                 page=page,
@@ -998,8 +1924,11 @@ class FlyBrowser:
             # Log stream directory for debugging
             stream = self._streaming_manager._streams.get(stream_info.stream_id)
             if stream:
-                logger.info(f"Stream files will be at: {stream.stream_dir}")
-                logger.info(f"Expected playlist: {stream.stream_dir / 'playlist.m3u8'}")
+                logger.info(
+                    f"[EMBEDDED_STREAM] Stream files location:\n"
+                    f"  Directory: {stream.stream_dir}\n"
+                    f"  Playlist: {stream.stream_dir / 'playlist.m3u8'}"
+                )
             
             # Return stream information with correct local URLs
             result = {
@@ -1012,16 +1941,25 @@ class FlyBrowser:
                 "hls_url": stream_info.hls_url,
                 "dash_url": stream_info.dash_url,
                 "rtmp_url": stream_info.rtmp_url,
+                "player_url": stream_info.player_url,
                 "stream_url": stream_info.hls_url or stream_info.dash_url or stream_info.rtmp_url,
                 "local_server_port": self._local_stream_port,  # For debugging
             }
             
-            logger.info(f"Embedded stream started: {stream_info.stream_id}")
+            logger.info(
+                f"[EMBEDDED_STREAM] Stream started successfully\n"
+                f"  Stream ID: {stream_info.stream_id}\n"
+                f"  HLS URL: {stream_info.hls_url}\n"
+                f"  Player URL: {stream_info.player_url}\n"
+                f"  Local Server Port: {self._local_stream_port}"
+            )
             return result
             
         except Exception as e:
             self._active_stream_id = None
-            logger.error(f"Failed to start embedded stream: {e}")
+            logger.error(f"[EMBEDDED_STREAM] Failed to start stream: {e}")
+            import traceback
+            logger.error(f"[EMBEDDED_STREAM] Traceback: {traceback.format_exc()}")
             raise
     
     async def _stop_embedded_stream(self) -> Dict[str, Any]:
@@ -1078,52 +2016,141 @@ class FlyBrowser:
         """Start local HTTP server for serving stream files."""
         from aiohttp import web
         import asyncio
+        import time
         
-        # Request logging middleware
+        # Client connection tracking
+        # Key: client identifier (IP:port or session), Value: {first_seen, last_seen, requests}
+        active_clients: Dict[str, Dict[str, Any]] = {}
+        client_timeout = 10.0  # Seconds before considering a client disconnected
+        
+        def get_client_id(request) -> str:
+            """Get unique client identifier from request."""
+            peername = request.transport.get_extra_info('peername') if request.transport else None
+            if peername:
+                return f"{peername[0]}:{peername[1]}"
+            # Fallback to remote address header
+            return request.headers.get('X-Forwarded-For', request.remote or 'unknown')
+        
+        def cleanup_stale_clients():
+            """Remove clients that haven't made requests recently."""
+            now = time.time()
+            stale = [cid for cid, info in active_clients.items() 
+                     if now - info['last_seen'] > client_timeout]
+            for cid in stale:
+                info = active_clients.pop(cid)
+                logger.info(f"Stream client disconnected: {cid} (was connected for {now - info['first_seen']:.1f}s, {info['requests']} requests)")
+        
+        # Client tracking middleware (no per-request logging)
         @web.middleware
-        async def log_requests(request, handler):
-            logger.info(f"HTTP Request: {request.method} {request.path}")
+        async def track_clients(request, handler):
+            client_id = get_client_id(request)
+            now = time.time()
+            
+            # Cleanup stale clients periodically
+            cleanup_stale_clients()
+            
+            # Track new client connection
+            if client_id not in active_clients:
+                active_clients[client_id] = {
+                    'first_seen': now,
+                    'last_seen': now,
+                    'requests': 0
+                }
+                logger.info(f"Stream client connected: {client_id}")
+            
+            # Update client activity
+            active_clients[client_id]['last_seen'] = now
+            active_clients[client_id]['requests'] += 1
+            
             try:
-                response = await handler(request)
-                logger.info(f"Response status: {response.status}")
-                return response
-            except web.HTTPException as e:
-                logger.warning(f"HTTP Exception: {e.status} for {request.path}")
+                return await handler(request)
+            except web.HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Handler error: {e}")
+                logger.error(f"Stream handler error for {client_id}: {e}")
                 raise
         
-        # Create app with middleware
-        app = web.Application(middlewares=[log_requests])
+        # Create app with client tracking middleware
+        app = web.Application(middlewares=[track_clients])
         
-        # Serve stream files
+        # Serve embedded web player (must be registered BEFORE the generic filename route)
+        async def serve_player(request):
+            stream_id_req = request.match_info['stream_id']
+            
+            # Get stream info for protocol/URLs and quality
+            quality_label = "720p"  # Default
+            if self._streaming_manager:
+                stream_info = await self._streaming_manager.get_stream(stream_id_req)
+                if stream_info:
+                    protocol = stream_info.protocol.value if hasattr(stream_info.protocol, 'value') else str(stream_info.protocol)
+                    hls_url = stream_info.hls_url or ''
+                    dash_url = stream_info.dash_url or ''
+                    # Get quality info from stream config
+                    config = stream_info.config
+                    profile_name = config.quality_profile.value if hasattr(config.quality_profile, 'value') else str(config.quality_profile)
+                    quality_label = f"{profile_name.upper()} ({config.width}x{config.height}@{config.frame_rate}fps)"
+                else:
+                    protocol = 'hls'
+                    hls_url = f"http://localhost:{self._local_stream_port}/streams/{stream_id_req}/playlist.m3u8"
+                    dash_url = ''
+            else:
+                protocol = 'hls'
+                hls_url = f"http://localhost:{self._local_stream_port}/streams/{stream_id_req}/playlist.m3u8"
+                dash_url = ''
+            
+            # Render HTML using Jinja2 template with inline assets (embedded mode)
+            from flybrowser.service.template_renderer import render_player_html
+            html = render_player_html(
+                stream_id=stream_id_req,
+                protocol=protocol,
+                hls_url=hls_url,
+                dash_url=dash_url,
+                quality=quality_label,
+                inline_assets=True,
+            )
+            return web.Response(text=html, content_type='text/html')
+        
+        # Register player route FIRST (more specific)
+        app.router.add_get('/streams/{stream_id}/player', serve_player)
+        
+        # Serve stream files (generic route - must be after player route)
         async def serve_stream_file(request):
             stream_id = request.match_info['stream_id']
             filename = request.match_info['filename']
             file_path = stream_dir / stream_id / filename
             
-            logger.debug(f"HTTP request for: {file_path}")
-            logger.debug(f"Stream dir: {stream_dir}")
-            logger.debug(f"File exists: {file_path.exists()}")
-            
-            # List directory contents for debugging
-            stream_subdir = stream_dir / stream_id
-            if stream_subdir.exists():
-                files = list(stream_subdir.iterdir())
-                logger.debug(f"Files in {stream_subdir}: {[f.name for f in files]}")
-            else:
-                logger.debug(f"Stream directory doesn't exist: {stream_subdir}")
-            
             if not file_path.exists():
-                logger.warning(f"File not found: {file_path}")
+                # Only log 404s at debug level - playlist retries are normal during startup
+                logger.debug(f"Stream file not found: {file_path}")
                 return web.Response(status=404)
             
-            return web.FileResponse(file_path)
+            # Determine content type based on file extension
+            if filename.endswith('.m3u8'):
+                content_type = 'application/vnd.apple.mpegurl'
+            elif filename.endswith('.ts'):
+                content_type = 'video/mp2t'
+            elif filename.endswith('.mpd'):
+                content_type = 'application/dash+xml'
+            else:
+                content_type = 'application/octet-stream'
+            
+            # Read file content and return with proper headers
+            with open(file_path, 'rb') as f:
+                content = f.read()
+            
+            return web.Response(
+                body=content,
+                content_type=content_type,
+                headers={
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type',
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                }
+            )
         
+        # Register filename route AFTER player route (less specific)
         app.router.add_get('/streams/{stream_id}/{filename}', serve_stream_file)
-        logger.info(f"Registered route: /streams/{{stream_id}}/{{filename}}")
-        logger.info(f"All routes: {[str(route) for route in app.router.routes()]}")
         
         # Find available port
         import socket

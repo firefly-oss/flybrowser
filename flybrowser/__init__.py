@@ -24,17 +24,35 @@ __author__ = "Firefly Software Solutions Inc"
 __license__ = "Apache-2.0"
 
 from flybrowser.agents import (
-    ActionAgent,
-    BaseAgent,
-    ExtractionAgent,
-    MonitoringAgent,
-    NavigationAgent,
-    WorkflowAgent,
+    ReActAgent,
+    AgentOrchestrator,
+    ToolRegistry,
+    AgentMemory,
+    ReActParser,
+    ExecutionMode,
+    SafetyLevel,
+    ExecutionState,
 )
 from flybrowser.client import FlyBrowserClient
 from flybrowser.core.browser import BrowserManager
+from flybrowser.core.proxy_rotator import (
+    ProxyConfig,
+    ProxyRotator,
+    ProxyProtocol,
+    ProxyStatus,
+    RotationStrategy,
+)
 from flybrowser.core.browser_pool import BrowserPool, PoolConfig
 from flybrowser.core.page import PageController
+from flybrowser.core.performance import (
+    PerformanceConfig,
+    SpeedPreset,
+    get_performance_config,
+    set_performance_config,
+    use_fast_mode,
+    use_balanced_mode,
+    use_thorough_mode,
+)
 from flybrowser.core.recording import (
     RecordingConfig,
     RecordingManager,
@@ -44,21 +62,40 @@ from flybrowser.core.recording import (
 )
 from flybrowser.sdk import FlyBrowser
 from flybrowser.security.pii_handler import PIIConfig, PIIHandler, PIIType
+from flybrowser.utils.execution_logger import LogVerbosity
 
 __all__ = [
-    # Agents
-    "ActionAgent",
-    "BaseAgent",
-    "ExtractionAgent",
-    "MonitoringAgent",
-    "NavigationAgent",
-    "WorkflowAgent",
+    # Agents - ReAct Framework
+    "ReActAgent",
+    "AgentOrchestrator",
+    "ToolRegistry",
+    "AgentMemory",
+    "ReActParser",
+    "ExecutionMode",
+    "SafetyLevel",
+    "ExecutionState",
     # Core
     "BrowserManager",
     "BrowserPool",
     "FlyBrowser",
     "FlyBrowserClient",
     "PageController",
+    # Proxy Rotation
+    "ProxyConfig",
+    "ProxyRotator",
+    "ProxyProtocol",
+    "ProxyStatus",
+    "RotationStrategy",
+    # Logging
+    "LogVerbosity",
+    # Performance
+    "PerformanceConfig",
+    "SpeedPreset",
+    "get_performance_config",
+    "set_performance_config",
+    "use_fast_mode",
+    "use_balanced_mode",
+    "use_thorough_mode",
     # Security
     "PIIConfig",
     "PIIHandler",

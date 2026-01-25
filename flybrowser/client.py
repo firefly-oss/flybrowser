@@ -652,6 +652,78 @@ class FlyBrowserClient:
             json={"text": text},
         ) or {}
 
+    # ==================== Agent Mode API (Primary Interface) ====================
+
+    async def agent(
+        self,
+        session_id: str,
+        task: str,
+        context: Optional[Dict[str, Any]] = None,
+        max_iterations: int = 50,
+        max_time_seconds: float = 1800.0,
+    ) -> Dict[str, Any]:
+        """Execute a task using the intelligent agent.
+
+        This is the primary and recommended method for complex browser automation.
+        The agent automatically selects the optimal reasoning strategy and adapts
+        dynamically during execution.
+
+        Args:
+            session_id: Session ID
+            task: Natural language description of what to accomplish
+            context: User-provided context (preferences, constraints, form data)
+            max_iterations: Maximum action iterations (default: 50)
+            max_time_seconds: Maximum execution time (default: 1800)
+
+        Returns:
+            Agent execution result including:
+            - success: Whether task was completed
+            - result_data: Extracted data or confirmations
+            - iterations: Number of iterations executed
+            - duration_seconds: Execution time
+            - execution_history: Summary of actions taken
+        """
+        return await self._request(
+            "POST",
+            f"/sessions/{session_id}/agent",
+            base_url=self._get_session_url(session_id),
+            json={
+                "task": task,
+                "context": context or {},
+                "max_iterations": max_iterations,
+                "max_time_seconds": max_time_seconds,
+            },
+            timeout=max_time_seconds + 60,
+        ) or {}
+
+    async def observe(
+        self,
+        session_id: str,
+        query: str,
+        return_selectors: bool = True,
+    ) -> Dict[str, Any]:
+        """Observe and identify elements on the page.
+
+        Analyzes the page to find elements matching a natural language description.
+
+        Args:
+            session_id: Session ID
+            query: Natural language description of what to find
+            return_selectors: Include CSS selectors in response (default: True)
+
+        Returns:
+            Observe result including:
+            - success: Whether elements were found
+            - elements: List of found elements with selectors
+            - page_url: Current page URL
+        """
+        return await self._request(
+            "POST",
+            f"/sessions/{session_id}/observe",
+            base_url=self._get_session_url(session_id),
+            json={"query": query, "return_selectors": return_selectors},
+        ) or {}
+
     # ==================== Cluster API ====================
 
     async def get_cluster_status(self) -> Dict[str, Any]:
