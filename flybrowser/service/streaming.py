@@ -847,6 +847,7 @@ class StreamingSession:
                     try:
                         # Find latest segment file modification time
                         segment_files = list(self.stream_dir.glob("*.ts"))
+                        segment_count = len(segment_files)
                         if segment_files:
                             current_latest_mtime = max(
                                 f.stat().st_mtime for f in segment_files
@@ -854,24 +855,43 @@ class StreamingSession:
                             if last_segment_mtime == 0.0:
                                 # First check, initialize
                                 last_segment_mtime = current_latest_mtime
+                                logger.debug(
+                                    f"Stream {self.info.stream_id}: HLS initialized with "
+                                    f"{segment_count} segments"
+                                )
                             elif current_latest_mtime > last_segment_mtime:
                                 # New segment created, update tracker
                                 last_segment_mtime = current_latest_mtime
-                            elif (current_time - last_segment_mtime) > segment_stall_threshold:
-                                # No new segments for too long - stall detected
-                                logger.warning(
-                                    f"Stream {self.info.stream_id}: HLS segment stall detected - "
-                                    f"no new segments for {current_time - last_segment_mtime:.1f}s"
-                                )
-                                self.info.health = StreamHealth.UNHEALTHY
-                                self._consecutive_failures += 1
-                                if self._consecutive_failures >= 2:
-                                    logger.info(
-                                        f"Stream {self.info.stream_id}: Triggering recovery "
-                                        f"due to HLS segment stall"
+                                # Log segment progress periodically
+                                if segment_count % 10 == 0:
+                                    logger.debug(
+                                        f"Stream {self.info.stream_id}: HLS segments: {segment_count}"
                                     )
-                                    asyncio.create_task(self._attempt_recovery())
-                                continue
+                            else:
+                                stall_duration = current_time - last_segment_mtime
+                                if stall_duration > segment_stall_threshold:
+                                    # No new segments for too long - stall detected
+                                    logger.warning(
+                                        f"Stream {self.info.stream_id}: HLS segment stall detected - "
+                                        f"no new segments for {stall_duration:.1f}s, "
+                                        f"last segment count: {segment_count}, "
+                                        f"recorder recording: {self._recorder.is_recording if self._recorder else 'N/A'}"
+                                    )
+                                    self.info.health = StreamHealth.UNHEALTHY
+                                    self._consecutive_failures += 1
+                                    if self._consecutive_failures >= 2:
+                                        logger.info(
+                                            f"Stream {self.info.stream_id}: Triggering recovery "
+                                            f"due to HLS segment stall"
+                                        )
+                                        asyncio.create_task(self._attempt_recovery())
+                                    continue
+                        else:
+                            # No segments at all after warmup period
+                            if elapsed > warmup_period:
+                                logger.warning(
+                                    f"Stream {self.info.stream_id}: No HLS segments found in {self.stream_dir}"
+                                )
                     except Exception as e:
                         logger.debug(
                             f"Stream {self.info.stream_id}: Error checking HLS segments: {e}"
@@ -1315,11 +1335,13 @@ class StreamingManager:
                             continue
                         
                         # Remove streams with no viewers for too long
-                        if (len(stream.info.viewer_ids) == 0 and
-                            uptime > 300):  # 5 minutes with no viewers
-                            logger.info(f"Stream abandoned: {stream_id}")
-                            await stream.stop()
-                            to_remove.append(stream_id)
+                        # NOTE: Disabled viewer-based cleanup - streams should only be
+                        # stopped explicitly or when max duration is exceeded
+                        # if (len(stream.info.viewer_ids) == 0 and
+                        #     uptime > 300):  # 5 minutes with no viewers
+                        #     logger.info(f"Stream abandoned: {stream_id}")
+                        #     await stream.stop()
+                        #     to_remove.append(stream_id)
                     
                     for stream_id in to_remove:
                         del self._streams[stream_id]

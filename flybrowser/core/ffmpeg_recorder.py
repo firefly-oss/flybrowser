@@ -726,7 +726,7 @@ class ChromiumCDPCapture(BrowserCaptureStrategy):
 
         while self._running:
             try:
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)  # Check more frequently for faster detection
                 if not self._running:
                     break
 
@@ -743,8 +743,8 @@ class ChromiumCDPCapture(BrowserCaptureStrategy):
                 # Check if we're receiving frames
                 time_since_frame = time.time() - self._last_frame_time
 
-                # If no frames for 5 seconds (increased from 3 for stability), attempt recovery
-                if time_since_frame > 5.0:
+                # If no frames for 2 seconds, attempt recovery (faster detection)
+                if time_since_frame > 2.0:
                     self._recovery_in_progress = True
                     logger.warning(f"[CAPTURE] No frames for {time_since_frame:.1f}s, attempting recovery...")
 
@@ -766,10 +766,13 @@ class ChromiumCDPCapture(BrowserCaptureStrategy):
                             await self._recreate_session()
                             self._consecutive_restarts = 0
 
+                        # Reset frame time after recovery attempt to avoid immediate re-trigger
+                        self._last_frame_time = time.time()
+
                         # Wait for frames to arrive before declaring success
                         # Record the frame count before waiting
                         frames_before = self.recorder._metadata.total_frames
-                        await asyncio.sleep(2.0)
+                        await asyncio.sleep(1.0)  # Shorter wait for faster feedback
                         frames_after = self.recorder._metadata.total_frames
 
                         # Check if frames actually started flowing (not just time-based)
@@ -778,6 +781,7 @@ class ChromiumCDPCapture(BrowserCaptureStrategy):
                             self._consecutive_restarts = 0
                         else:
                             logger.warning(f"[CAPTURE] Recovery attempt completed but no new frames received (before: {frames_before}, after: {frames_after})")
+                            # Don't reset _last_frame_time on failure - let watchdog trigger again quickly
 
                     except Exception as e:
                         logger.error(f"[CAPTURE] Recovery failed: {e}")
@@ -900,6 +904,17 @@ class ChromiumCDPCapture(BrowserCaptureStrategy):
                 self._last_log_time = current_time
                 self._frame_count = 0
 
+            # CRITICAL: Acknowledge FIRST before heavy processing
+            # Chrome will stop sending frames if ack is delayed
+            session_id = params.get("sessionId")
+            if self._cdp_session and self._running and session_id is not None:
+                try:
+                    loop = asyncio.get_event_loop()
+                    task = loop.create_task(self._ack(session_id))
+                    task.add_done_callback(self._ack_done)
+                except Exception as e:
+                    logger.warning(f"[CAPTURE] Failed to schedule frame ack: {e}")
+
             # Decode JPEG
             jpeg_data = r._base64_module.b64decode(params["data"])
             img = r._pil_image.open(r._io_module.BytesIO(jpeg_data))
@@ -921,20 +936,6 @@ class ChromiumCDPCapture(BrowserCaptureStrategy):
             with r._frame_lock:
                 r._latest_frame = raw_frame
             r._metadata.total_frames += 1
-
-            # Acknowledge to keep receiving - CRITICAL for continuous frames
-            # Must be sent ASAP or Chrome will stop sending frames
-            if self._cdp_session and self._running:
-                session_id = params["sessionId"]
-                # Schedule ack immediately - this is non-blocking
-                try:
-                    loop = asyncio.get_event_loop()
-                    # Create task with error handling
-                    task = loop.create_task(self._ack(session_id))
-                    # Add done callback to log errors
-                    task.add_done_callback(self._ack_done)
-                except Exception as e:
-                    logger.warning(f"[CAPTURE] Failed to schedule frame ack: {e}")
 
         except Exception as e:
             logger.warning(f"[CAPTURE] Frame processing error: {e}")
