@@ -87,6 +87,7 @@ class ToolCategory(str, Enum):
     NAVIGATION = "navigation"        # Browser navigation tools
     INTERACTION = "interaction"      # Page interaction (click, type, etc.)
     EXTRACTION = "extraction"        # Data extraction tools
+    SEARCH = "search"                # Search tools (web search, ranking, etc.)
     SYSTEM = "system"                # System tools (complete, fail, etc.)
     UTILITY = "utility"              # Helper utilities
     DANGEROUS = "dangerous"          # Tools requiring approval
@@ -99,6 +100,42 @@ class SafetyLevel(str, Enum):
     MODERATE = "moderate"            # May need logging
     SENSITIVE = "sensitive"          # Requires extra caution
     DANGEROUS = "dangerous"          # Requires human approval
+
+
+class ErrorCode(str, Enum):
+    """Standardized error codes for tool execution failures."""
+    
+    # Parameter/Input Errors
+    INVALID_PARAMS = "INVALID_PARAMS"              # Invalid or missing parameters
+    INVALID_SELECTOR = "INVALID_SELECTOR"          # Invalid CSS/XPath selector
+    INVALID_URL = "INVALID_URL"                    # Malformed or invalid URL
+    
+    # Execution Errors
+    TIMEOUT = "TIMEOUT"                            # Operation timed out
+    EXECUTION_ERROR = "EXECUTION_ERROR"            # General execution failure
+    NOT_FOUND = "NOT_FOUND"                        # Element/resource not found
+    
+    # Network/Connection Errors
+    NETWORK_ERROR = "NETWORK_ERROR"                # Network connectivity issue
+    NAVIGATION_ERROR = "NAVIGATION_ERROR"          # Navigation failed
+    LOAD_FAILED = "LOAD_FAILED"                    # Page load failed
+    
+    # Permission/Security Errors
+    PERMISSION_DENIED = "PERMISSION_DENIED"        # Insufficient permissions
+    BLOCKED = "BLOCKED"                            # Action blocked (CORS, CSP, etc.)
+    
+    # Content/Parsing Errors
+    PARSE_ERROR = "PARSE_ERROR"                    # Failed to parse content
+    EXTRACTION_FAILED = "EXTRACTION_FAILED"        # Data extraction failed
+    
+    # State Errors
+    INVALID_STATE = "INVALID_STATE"                # Invalid state for operation
+    PAGE_NOT_LOADED = "PAGE_NOT_LOADED"            # No page loaded
+    
+    # Tool-Specific Errors
+    SEARCH_FAILED = "SEARCH_FAILED"                # Search operation failed
+    CAPTCHA_DETECTED = "CAPTCHA_DETECTED"          # CAPTCHA blocking action
+    RATE_LIMITED = "RATE_LIMITED"                  # Rate limit exceeded
 
 
 class OperationMode(str, Enum):
@@ -445,6 +482,7 @@ def build_repair_prompt(
     malformed_output: str,
     validation_errors: List[str],
     schema: Dict[str, Any] = REACT_RESPONSE_SCHEMA,
+    available_tools: Optional[List[str]] = None,
 ) -> str:
     """
     Build a repair prompt to fix malformed LLM output.
@@ -457,6 +495,7 @@ def build_repair_prompt(
         malformed_output: The malformed JSON output from the LLM
         validation_errors: List of validation error messages
         schema: The expected JSON schema
+        available_tools: List of available tool names (to guide tool selection)
         
     Returns:
         A prompt asking the LLM to repair its output
@@ -470,6 +509,15 @@ def build_repair_prompt(
     max_output_len = 2000
     if len(malformed_output) > max_output_len:
         malformed_output = malformed_output[:max_output_len] + "... [truncated]"
+    
+    # Build tool guidance if available
+    tool_guidance = ""
+    if available_tools:
+        tool_guidance = f"""\n## Available Tools (use ONLY these)
+{', '.join(available_tools)}
+
+**IMPORTANT**: For search operations, use 'search' (API-based, fast) NOT 'search_human' (browser-based, slow) unless 'search' is not in the available tools list.
+"""
     
     return f"""Your previous response did not match the required JSON schema. Please fix it.
 
@@ -485,7 +533,7 @@ def build_repair_prompt(
 ```json
 {schema_str}
 ```
-
+{tool_guidance}
 ## Original Task Context
 {original_prompt}
 
@@ -494,6 +542,7 @@ Please provide a corrected JSON response that:
 1. Fixes all validation errors listed above
 2. Maintains the same intent/action from your original response
 3. Strictly follows the required schema
+4. Uses ONLY tools from the available tools list
 
 Respond ONLY with the corrected JSON object, no explanation."""
 

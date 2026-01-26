@@ -207,3 +207,45 @@ class ConfigurationError(FlyBrowserError):
     """
     pass
 
+
+class ToolError(FlyBrowserError):
+    """Exception raised for tool execution errors.
+    
+    Base exception for all tool-related failures in the ReAct framework.
+    Raised when a tool fails to execute or encounters an unexpected error.
+    
+    Examples:
+        - Tool parameter validation failure
+        - Tool execution timeout
+        - Tool-specific operation failure
+    """
+    pass
+
+
+class SearchError(ToolError):
+    """Exception raised when search operations fail.
+    
+    Raised when web search operations fail, including API search,
+    human-like search, or search ranking failures.
+    
+    Examples:
+        - Search API unavailable
+        - Search query parsing failure
+        - No search results found
+    """
+    pass
+
+
+class ValidationError(FlyBrowserError):
+    """Exception raised for validation errors.
+    
+    Raised when input validation fails, including parameter validation,
+    schema validation, or data validation.
+    
+    Examples:
+        - Invalid tool parameters
+        - Data doesn't match schema
+        - Invalid selector format
+    """
+    pass
+
