@@ -323,6 +323,122 @@ browser = FlyBrowser(
 )
 ```
 
+## Using Context for Structured Data
+
+For complex forms, file uploads, and filtered extraction, use the context system:
+
+### Form Filling with Context
+
+```python
+import asyncio
+from flybrowser import FlyBrowser
+from flybrowser.agents.context import ContextBuilder
+
+async def main():
+    async with FlyBrowser(
+        llm_provider="openai",
+        api_key="sk-...",
+        headless=False,
+    ) as browser:
+        
+        await browser.goto("https://example.com/login")
+        
+        # Create context with form data
+        context = ContextBuilder()\
+            .with_form_data({
+                "input[name=email]": "user@example.com",
+                "input[name=password]": "secure_password",
+                "input[type=checkbox]": True
+            })\
+            .build()
+        
+        # Fill and submit the form with context
+        await browser.act("Fill and submit the login form", context=context)
+
+asyncio.run(main())
+```
+
+### File Upload with Context
+
+```python
+import asyncio
+from flybrowser import FlyBrowser
+from flybrowser.agents.context import ContextBuilder
+
+async def main():
+    async with FlyBrowser(
+        llm_provider="openai",
+        api_key="sk-...",
+    ) as browser:
+        
+        await browser.goto("https://example.com/upload")
+        
+        # Create context for file upload
+        context = ContextBuilder()\
+            .with_file("resume", "/path/to/resume.pdf", "application/pdf")\
+            .with_file("cover_letter", "/path/to/cover.docx")\
+            .build()
+        
+        await browser.act("Upload the documents", context=context)
+
+asyncio.run(main())
+```
+
+### Filtered Extraction with Context
+
+```python
+import asyncio
+from flybrowser import FlyBrowser
+from flybrowser.agents.context import ContextBuilder
+
+async def main():
+    async with FlyBrowser(
+        llm_provider="openai",
+        api_key="sk-...",
+    ) as browser:
+        
+        await browser.goto("https://shop.example.com/products")
+        
+        # Create context with filters and preferences
+        context = ContextBuilder()\
+            .with_filters({"price_max": 100, "category": "electronics"})\
+            .with_preferences({"sort_by": "price", "limit": 10})\
+            .build()
+        
+        # Extract with context
+        result = await browser.extract(
+            "Get product listings",
+            context=context,
+            schema={
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "price": {"type": "number"}
+                    }
+                }
+            }
+        )
+        
+        if result.success:
+            for product in result.data:
+                print(f"{product['name']}: ${product['price']}")
+
+asyncio.run(main())
+```
+
+The context system provides type-safe, structured data passing for:
+- **form_data**: Automated form filling
+- **files**: File uploads with metadata
+- **filters**: Data filtering criteria
+- **preferences**: User preferences
+- **conditions**: Conditional logic
+- **constraints**: General constraints
+- **metadata**: Tool-specific metadata
+
+See the [Context Usage Guide](../guides/context-usage.md) for more examples.
+
 ## Common Patterns
 
 ### Retry on Failure

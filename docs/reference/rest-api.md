@@ -185,9 +185,23 @@ Navigate using natural language instructions.
 ```json
 {
   "instruction": "go to the login page",
-  "use_vision": true
+  "use_vision": true,
+  "context": {
+    "conditions": {
+      "requires_login": false
+    },
+    "constraints": {
+      "timeout_seconds": 30
+    }
+  }
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `instruction` | string | Yes | Natural language navigation instruction |
+| `use_vision` | boolean | No | Use vision for navigation (default: true) |
+| `context` | object | No | Context with conditions, constraints |
 
 **Response:**
 
@@ -222,6 +236,16 @@ Extract data from the current page using natural language.
         "price": {"type": "string"}
       }
     }
+  },
+  "context": {
+    "filters": {
+      "price_max": 100,
+      "category": "electronics"
+    },
+    "preferences": {
+      "sort_by": "price",
+      "limit": 10
+    }
   }
 }
 ```
@@ -231,6 +255,7 @@ Extract data from the current page using natural language.
 | `query` | string | Yes | Natural language extraction query |
 | `use_vision` | boolean | No | Use vision for extraction (default: false) |
 | `schema` | object | No | JSON Schema for structured extraction |
+| `context` | object | No | Context with filters, preferences, etc. |
 
 **Response:**
 
@@ -280,9 +305,28 @@ Perform an action on the page using natural language.
 ```json
 {
   "instruction": "click the login button",
-  "use_vision": true
+  "use_vision": true,
+  "context": {
+    "form_data": {
+      "input[name=email]": "user@example.com",
+      "input[name=password]": "secret123"
+    },
+    "files": [
+      {
+        "field": "resume",
+        "path": "/path/to/resume.pdf",
+        "mime_type": "application/pdf"
+      }
+    ]
+  }
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `instruction` | string | Yes | Natural language action instruction |
+| `use_vision` | boolean | No | Use vision for action (default: true) |
+| `context` | object | No | Context with form_data, files, etc. |
 
 **Response:**
 
@@ -309,7 +353,33 @@ Execute a complex task using the intelligent agent. This is the recommended endp
 {
   "task": "Search for 'python programming' and extract the top 5 results",
   "context": {
-    "preferences": {"sort": "relevance"}
+    "form_data": {
+      "input[name=company]": "Acme Corp"
+    },
+    "files": [
+      {
+        "field": "logo",
+        "path": "/path/to/logo.png",
+        "mime_type": "image/png"
+      }
+    ],
+    "filters": {
+      "site": "github.com",
+      "language": "python"
+    },
+    "preferences": {
+      "max_results": 5,
+      "sort_by": "stars"
+    },
+    "conditions": {
+      "requires_login": false
+    },
+    "constraints": {
+      "timeout_seconds": 60
+    },
+    "metadata": {
+      "request_id": "abc123"
+    }
   },
   "max_iterations": 50,
   "max_time_seconds": 1800
@@ -319,9 +389,21 @@ Execute a complex task using the intelligent agent. This is the recommended endp
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `task` | string | Yes | Natural language task description |
-| `context` | object | No | Additional context (preferences, constraints) |
+| `context` | object | No | Structured context (form_data, files, filters, preferences, conditions, constraints, metadata) |
 | `max_iterations` | integer | No | Maximum iterations (default: 50) |
 | `max_time_seconds` | number | No | Maximum execution time (default: 1800) |
+
+**Context Object Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `form_data` | object | Form field selectors and values for automated filling |
+| `files` | array | File upload specifications (field, path, mime_type, name) |
+| `filters` | object | Data filtering criteria (e.g., price_max, category, site, filetype) |
+| `preferences` | object | User preferences (e.g., max_results, sort_by, safe_search) |
+| `conditions` | object | Conditional logic (e.g., requires_login, max_redirects) |
+| `constraints` | object | General constraints (e.g., timeout_seconds, max_retries) |
+| `metadata` | object | Tool-specific metadata (e.g., request_id, user_agent) |
 
 **Response:**
 
@@ -351,9 +433,21 @@ Find elements on the page matching a description.
 ```json
 {
   "query": "find the search input",
-  "return_selectors": true
+  "return_selectors": true,
+  "context": {
+    "filters": {
+      "type": "submit",
+      "visible": true
+    }
+  }
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | Yes | Natural language element query |
+| `return_selectors` | boolean | No | Return CSS selectors (default: true) |
+| `context` | object | No | Context with filters, preferences |
 
 **Response:**
 

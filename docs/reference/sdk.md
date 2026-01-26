@@ -157,7 +157,8 @@ await browser.goto("https://example.com", wait_until="networkidle")
 ```python
 async def navigate(
     instruction: str,
-    use_vision: bool = True
+    use_vision: bool = True,
+    context: ActionContext | dict | None = None
 ) -> dict
 ```
 
@@ -167,10 +168,20 @@ Navigate using natural language.
 |-----------|------|---------|-------------|
 | `instruction` | `str` | Required | Natural language navigation instruction |
 | `use_vision` | `bool` | `True` | Use visual context |
+| `context` | `ActionContext \| dict \| None` | `None` | Structured context (conditions, constraints) |
 
 ```python
 result = await browser.navigate("go to the login page")
 result = await browser.navigate("click on Products in the menu")
+
+# With conditions context (future enhancement)
+from flybrowser.agents.context import ContextBuilder
+
+context = ContextBuilder()\
+    .with_conditions({"requires_login": False})\
+    .with_constraints({"timeout_seconds": 30})\
+    .build()
+result = await browser.navigate("go to dashboard", context=context)
 ```
 
 ---
@@ -183,6 +194,7 @@ result = await browser.navigate("click on Products in the menu")
 async def act(
     instruction: str,
     use_vision: bool = True,
+    context: ActionContext | dict | None = None,
     return_metadata: bool = True
 ) -> AgentRequestResponse | dict
 ```
@@ -193,6 +205,7 @@ Execute a browser action using natural language.
 |-----------|------|---------|-------------|
 | `instruction` | `str` | Required | Action to perform |
 | `use_vision` | `bool` | `True` | Use visual context |
+| `context` | `ActionContext \| dict \| None` | `None` | Structured context (form data, files, etc.) |
 | `return_metadata` | `bool` | `True` | Return full response object |
 
 ```python
@@ -204,6 +217,23 @@ result = await browser.act("type 'hello' in the search box")
 
 # Multiple actions
 result = await browser.act("scroll down and click Learn More")
+
+# With form data context
+from flybrowser.agents.context import ContextBuilder
+
+context = ContextBuilder()\
+    .with_form_data({
+        "input[name=email]": "user@example.com",
+        "input[name=password]": "secure_password"
+    })\
+    .build()
+result = await browser.act("Fill and submit the login form", context=context)
+
+# With file upload context
+context = ContextBuilder()\
+    .with_file("resume", "/path/to/resume.pdf", "application/pdf")\
+    .build()
+result = await browser.act("Upload resume to the application form", context=context)
 ```
 
 ### extract()
@@ -213,6 +243,7 @@ async def extract(
     query: str,
     use_vision: bool = False,
     schema: dict | None = None,
+    context: ActionContext | dict | None = None,
     return_metadata: bool = True
 ) -> AgentRequestResponse | dict
 ```
@@ -224,6 +255,7 @@ Extract data from the page.
 | `query` | `str` | Required | What to extract |
 | `use_vision` | `bool` | `False` | Use visual context |
 | `schema` | `dict \| None` | `None` | JSON Schema for structured data |
+| `context` | `ActionContext \| dict \| None` | `None` | Structured context (filters, preferences) |
 | `return_metadata` | `bool` | `True` | Return full response object |
 
 ```python
@@ -241,6 +273,29 @@ result = await browser.extract(
         }
     }
 )
+
+# With filters and preferences context
+from flybrowser.agents.context import ContextBuilder
+
+context = ContextBuilder()\
+    .with_filters({"price_max": 500, "category": "electronics"})\
+    .with_preferences({"sort_by": "price", "limit": 10})\
+    .build()
+
+result = await browser.extract(
+    "get product listings",
+    context=context,
+    schema={
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "price": {"type": "number"}
+            }
+        }
+    }
+)
 ```
 
 ### observe()
@@ -249,6 +304,7 @@ result = await browser.extract(
 async def observe(
     query: str,
     return_selectors: bool = True,
+    context: ActionContext | dict | None = None,
     return_metadata: bool = True
 ) -> AgentRequestResponse | list
 ```
@@ -259,11 +315,20 @@ Find elements on the page.
 |-----------|------|---------|-------------|
 | `query` | `str` | Required | Description of elements to find |
 | `return_selectors` | `bool` | `True` | Include CSS selectors |
+| `context` | `ActionContext \| dict \| None` | `None` | Structured context (filters, preferences) |
 | `return_metadata` | `bool` | `True` | Return full response object |
 
 ```python
 result = await browser.observe("find all buttons")
 result = await browser.observe("find the login form", return_selectors=True)
+
+# With filters context
+from flybrowser.agents.context import ContextBuilder
+
+context = ContextBuilder()\
+    .with_filters({"type": "submit", "visible": True})\
+    .build()
+result = await browser.observe("find buttons", context=context)
 ```
 
 ### agent()
@@ -271,7 +336,7 @@ result = await browser.observe("find the login form", return_selectors=True)
 ```python
 async def agent(
     task: str,
-    context: dict | None = None,
+    context: ActionContext | dict | None = None,
     max_iterations: int = 50,
     max_time_seconds: float = 1800.0,
     return_metadata: bool = True
@@ -283,7 +348,7 @@ Execute autonomous multi-step tasks.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `task` | `str` | Required | Task description |
-| `context` | `dict \| None` | `None` | Additional context |
+| `context` | `ActionContext \| dict \| None` | `None` | Structured context (form data, files, filters, etc.) |
 | `max_iterations` | `int` | `50` | Max ReAct cycles |
 | `max_time_seconds` | `float` | `1800.0` | Time limit |
 | `return_metadata` | `bool` | `True` | Return full response |
@@ -304,10 +369,38 @@ result = await browser.agent(
     "Find the cheapest flight to Tokyo and extract the price"
 )
 
+# With simple dict context (legacy)
 result = await browser.agent(
     "Complete the registration form",
     context={"email": "user@example.com", "name": "John"},
     max_iterations=30
+)
+
+# With ActionContext for form filling and file upload
+from flybrowser.agents.context import ContextBuilder
+
+context = ContextBuilder()\
+    .with_form_data({
+        "input[name=company]": "Acme Corp",
+        "textarea[name=description]": "Enterprise solutions"
+    })\
+    .with_file("logo", "/path/to/logo.png", "image/png")\
+    .build()
+
+result = await browser.agent(
+    "Fill out the company registration form and upload logo",
+    context=context
+)
+
+# With filters for search and extraction
+context = ContextBuilder()\
+    .with_filters({"site": "github.com", "language": "python"})\
+    .with_preferences({"max_results": 5, "sort_by": "stars"})\
+    .build()
+
+result = await browser.agent(
+    "Search for Python web frameworks and extract the top repositories",
+    context=context
 )
 ```
 
