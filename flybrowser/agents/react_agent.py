@@ -2202,11 +2202,12 @@ class ReActAgent:
         """
         self._state = ExecutionState.ACTING
 
-        # Get tool from registry (pass page controller and element detector)
+        # Get tool from registry (pass page controller, element detector, and memory)
         tool = self.tool_registry.get_tool(
             action.tool_name,
             page_controller=self.page,
             element_detector=self.element_detector,
+            memory=self.memory,
         )
         if tool is None:
             error_result = ToolResult.error_result(

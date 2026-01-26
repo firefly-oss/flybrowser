@@ -193,16 +193,36 @@ class TypeTool(BaseTool):
         )
     
     async def execute(self, **kwargs: Any) -> ToolResult:
-        """Execute typing into field."""
+        """Execute typing into field.
+        
+        Supports both explicit parameters and context-based form filling.
+        Context format: {"form_data": {"field_selector": "value", ...}}
+        """
         selector = kwargs.get("selector")
         text = kwargs.get("text")
         clear_first = kwargs.get("clear_first", True)
         press_enter = kwargs.get("press_enter", False)
 
+        # Check if text is not provided - try to get from context form_data
+        if text is None and selector:
+            user_context = self.get_user_context()
+            form_data = user_context.get("form_data", {})
+            
+            # Try to match selector to a form_data key
+            if selector in form_data:
+                text = form_data[selector]
+            else:
+                # Try to match by field name or ID
+                for field_key, field_value in form_data.items():
+                    # Check if selector contains the field key
+                    if field_key.lower() in selector.lower():
+                        text = field_value
+                        break
+        
         if not selector:
             return ToolResult.error_result("Selector is required")
         if text is None:
-            return ToolResult.error_result("Text is required")
+            return ToolResult.error_result("Text is required (or provide context with form_data)")
 
         try:
             result = await self._page_controller.type_and_track(
@@ -1215,15 +1235,40 @@ class UploadFileTool(BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        """Execute file upload."""
+        """Execute file upload.
+        
+        Supports both explicit file_path parameter and context-based uploads.
+        Context format: {"files": [{"field": "selector", "path": "file.pdf", "mime_type": "..."}]}
+        """
         selector = kwargs.get("selector")
         file_path = kwargs.get("file_path")
         use_ai = kwargs.get("use_ai", False)
 
+        # Check if selector is not provided - try to get from context
         if not selector:
-            return ToolResult.error_result("Selector is required")
+            # Try to get first file from context
+            user_context = self.get_user_context()
+            files_from_context = user_context.get("files", [])
+            if files_from_context and len(files_from_context) > 0:
+                first_file = files_from_context[0]
+                selector = first_file.get("field")
+                if not file_path:
+                    file_path = first_file.get("path")
+        
+        if not selector:
+            return ToolResult.error_result("Selector is required (or provide context with files array)")
+        
+        # If file_path still not provided, check context for matching field
         if not file_path:
-            return ToolResult.error_result("File path is required")
+            user_context = self.get_user_context()
+            files_from_context = user_context.get("files", [])
+            for file_info in files_from_context:
+                if file_info.get("field") == selector:
+                    file_path = file_info.get("path")
+                    break
+        
+        if not file_path:
+            return ToolResult.error_result("File path is required (or provide context with files array)")
 
         try:
             page = self._page_controller.page

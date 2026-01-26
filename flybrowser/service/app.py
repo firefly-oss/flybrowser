@@ -602,6 +602,7 @@ async def extract_data(
         # Use return_metadata=True to get full response with metrics
         response = await browser.extract(
             query=request.query,
+            context=request.context,
             use_vision=request.use_vision,
             schema=request.schema,
             return_metadata=True,
@@ -664,6 +665,7 @@ async def perform_action(
         # Use return_metadata=True to get full response with metrics
         response = await browser.act(
             instruction=request.instruction,
+            context=request.context,
             use_vision=request.use_vision,
             return_metadata=True,
         )
@@ -730,6 +732,7 @@ async def navigate_natural_language(
         browser = session_manager.get_session(session_id)
         result = await browser.navigate(
             instruction=request.instruction,
+            context=request.context,
             use_vision=request.use_vision,
         )
 
@@ -959,6 +962,7 @@ async def observe_elements(
         # Execute observe using the observe() method
         result = await browser.observe(
             query=request.query,
+            context=request.context,
             return_selectors=request.return_selectors,
             return_metadata=False,  # Get raw data for API response
         )

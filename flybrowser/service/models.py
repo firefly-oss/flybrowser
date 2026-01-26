@@ -129,6 +129,10 @@ class ExtractRequest(BaseModel):
     query: str = Field(..., description="Natural language extraction query")
     use_vision: bool = Field(False, description="Use vision-based extraction")
     schema: Optional[Dict[str, Any]] = Field(None, description="JSON schema for structured output")
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional context to inform extraction (filters, preferences, constraints)"
+    )
 
 
 class LLMUsageResponse(BaseModel):
@@ -179,10 +183,30 @@ class ExtractResponse(BaseModel):
 
 
 class ActionRequest(BaseModel):
-    """Request to perform an action."""
+    """Request to perform an action.
+    
+    Supports contextual actions including form filling, file uploads,
+    and data-driven interactions.
+    
+    Example with form data:
+        >>> request = ActionRequest(
+        ...     instruction="Fill and submit the login form",
+        ...     context={"form_data": {"username": "user@example.com", "password": "***"}}
+        ... )
+    
+    Example with file upload:
+        >>> request = ActionRequest(
+        ...     instruction="Upload the resume file",
+        ...     context={"files": [{"field": "resume", "path": "/path/to/file.pdf"}]}
+        ... )
+    """
 
     instruction: str = Field(..., description="Natural language action instruction")
     use_vision: bool = Field(True, description="Use vision for element detection")
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional context for the action (form_data, files, constraints)"
+    )
     wait_after: int = Field(1000, ge=0, description="Wait time after action in milliseconds")
 
 
@@ -467,6 +491,10 @@ class NavigateNLRequest(BaseModel):
 
     instruction: str = Field(..., description="Natural language navigation instruction")
     use_vision: bool = Field(True, description="Use vision for element detection")
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional context for navigation (conditions, preferences)"
+    )
 
 
 class NavigateNLResponse(BaseModel):
@@ -550,6 +578,10 @@ class ObserveRequest(BaseModel):
     
     query: str = Field(..., description="Natural language description of what to find")
     return_selectors: bool = Field(True, description="Include CSS selectors in response")
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional context for element search (filters, constraints)"
+    )
 
 
 class ObserveResponse(BaseModel):

@@ -450,6 +450,7 @@ class FlyBrowserClient:
         session_id: str,
         instruction: str,
         schema: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Extract data from the current page.
 
@@ -457,11 +458,12 @@ class FlyBrowserClient:
             session_id: Session ID
             instruction: Natural language extraction instruction
             schema: Optional JSON schema for structured extraction
+            context: Additional context to inform extraction
 
         Returns:
             Extracted data
         """
-        data = {"instruction": instruction}
+        data = {"instruction": instruction, "context": context or {}}
         if schema:
             data["schema"] = schema
 
@@ -476,12 +478,14 @@ class FlyBrowserClient:
         self,
         session_id: str,
         instruction: str,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Perform an action on the page.
 
         Args:
             session_id: Session ID
             instruction: Natural language action instruction
+            context: Additional context for the action (form_data, files, etc.)
 
         Returns:
             Action result
@@ -490,7 +494,7 @@ class FlyBrowserClient:
             "POST",
             f"/sessions/{session_id}/action",
             base_url=self._get_session_url(session_id),
-            json={"instruction": instruction},
+            json={"instruction": instruction, "context": context or {}},
         ) or {}
 
     async def screenshot(
@@ -700,6 +704,7 @@ class FlyBrowserClient:
         self,
         session_id: str,
         query: str,
+        context: Optional[Dict[str, Any]] = None,
         return_selectors: bool = True,
     ) -> Dict[str, Any]:
         """Observe and identify elements on the page.
@@ -709,6 +714,7 @@ class FlyBrowserClient:
         Args:
             session_id: Session ID
             query: Natural language description of what to find
+            context: Additional context for element search
             return_selectors: Include CSS selectors in response (default: True)
 
         Returns:
@@ -721,7 +727,7 @@ class FlyBrowserClient:
             "POST",
             f"/sessions/{session_id}/observe",
             base_url=self._get_session_url(session_id),
-            json={"query": query, "return_selectors": return_selectors},
+            json={"query": query, "return_selectors": return_selectors, "context": context or {}},
         ) or {}
 
     # ==================== Cluster API ====================

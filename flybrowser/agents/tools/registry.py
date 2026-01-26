@@ -206,6 +206,7 @@ class ToolRegistry:
         name: str,
         page_controller: Optional["PageController"] = None,
         element_detector: Optional[Any] = None,
+        memory: Optional[Any] = None,
     ) -> Optional["BaseTool"]:
         """
         Get an instantiated tool by name.
@@ -214,6 +215,7 @@ class ToolRegistry:
             name: The tool name
             page_controller: Optional page controller to inject
             element_detector: Optional element detector for AI-based element finding
+            memory: Optional agent memory for context access
             
         Returns:
             Instantiated tool or None if not found
@@ -225,6 +227,9 @@ class ToolRegistry:
                 # Update element_detector if provided and tool supports it
                 if element_detector and hasattr(instance, '_element_detector'):
                     instance._element_detector = element_detector
+                # Inject memory for context access
+                if memory and hasattr(instance, 'set_memory'):
+                    instance.set_memory(memory)
                 return instance
             
             # Otherwise instantiate from class
@@ -238,9 +243,15 @@ class ToolRegistry:
             params = sig.parameters
             
             if 'element_detector' in params and element_detector:
-                return tool_class(page_controller=page_controller, element_detector=element_detector)
+                tool = tool_class(page_controller=page_controller, element_detector=element_detector)
             else:
-                return tool_class(page_controller=page_controller)
+                tool = tool_class(page_controller=page_controller)
+            
+            # Inject memory for context access
+            if memory and hasattr(tool, 'set_memory'):
+                tool.set_memory(memory)
+            
+            return tool
     
     def get_tool_class(self, name: str) -> Optional[Type["BaseTool"]]:
         """Get a tool class by name without instantiating."""

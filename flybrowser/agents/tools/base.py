@@ -125,6 +125,9 @@ class BaseTool(ABC):
     Tools are the primary mechanism for the agent to take actions.
     Each tool must define its metadata and implement the execute method.
     
+    Tools can access user-provided context through the memory system,
+    enabling context-aware behavior like form filling and file uploads.
+    
     Example:
         >>> class ClickTool(BaseTool):
         ...     metadata = ToolMetadata(
@@ -146,6 +149,41 @@ class BaseTool(ABC):
     def __init__(self, page_controller: Optional["PageController"] = None) -> None:
         """Initialize the tool with optional page controller."""
         self.page = page_controller
+        self._memory: Optional[Any] = None  # Set by tool registry
+    
+    def set_memory(self, memory: Any) -> None:
+        """Set memory reference for context access."""
+        self._memory = memory
+    
+    def get_user_context(self, key: Optional[str] = None, default: Any = None) -> Any:
+        """
+        Get user-provided context from memory.
+        
+        This allows tools to access context passed via SDK methods like:
+        - browser.act("fill form", context={"form_data": {...}})
+        - browser.act("upload file", context={"files": [...]})
+        
+        Args:
+            key: Context key to retrieve. If None, returns all context.
+            default: Default value if key not found.
+            
+        Returns:
+            Context value or default.
+            
+        Example:
+            >>> # In a tool's execute method:
+            >>> user_context = self.get_user_context()
+            >>> form_data = user_context.get("form_data", {})
+            >>> files = user_context.get("files", [])
+        """
+        if not self._memory or not hasattr(self._memory, 'working'):
+            return {} if key is None else default
+        
+        user_context = self._memory.working.get_scratch("user_context", {})
+        
+        if key is None:
+            return user_context
+        return user_context.get(key, default)
     
     @property
     def name(self) -> str:

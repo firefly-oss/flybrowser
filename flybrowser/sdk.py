@@ -959,7 +959,12 @@ class FlyBrowser:
         else:
             await self.page_controller.goto(url, wait_until=wait_until)
 
-    async def navigate(self, instruction: str, use_vision: bool = True) -> Dict[str, Any]:
+    async def navigate(
+        self,
+        instruction: str,
+        context: Optional[Dict[str, Any]] = None,
+        use_vision: bool = True,
+    ) -> Dict[str, Any]:
         """
         Navigate using natural language instructions.
 
@@ -968,9 +973,14 @@ class FlyBrowser:
         - Smart waiting for page loads
         - Automatic retry on navigation failures
         - Link and button detection
+        - Conditional navigation based on context
 
         Args:
             instruction: Natural language navigation instruction
+            context: Additional context for navigation (optional):
+                - conditions: Conditions that must be met for navigation
+                - preferences: User preferences for navigation path
+                - constraints: Navigation constraints
             use_vision: Use vision for element detection (default: True)
 
         Returns:
@@ -979,6 +989,12 @@ class FlyBrowser:
         Example:
             >>> await browser.navigate("go to the login page")
             >>> await browser.navigate("click the 'Products' menu item")
+            >>> 
+            >>> # With context
+            >>> await browser.navigate(
+            ...     "Navigate to search results",
+            ...     context={"preferences": {"sort_by": "price", "category": "electronics"}}
+            ... )
         """
         self._ensure_started()
 
@@ -1008,6 +1024,7 @@ class FlyBrowser:
     async def extract(
         self,
         query: str,
+        context: Optional[Dict[str, Any]] = None,
         use_vision: bool = False,
         schema: Optional[Dict[str, Any]] = None,
         return_metadata: bool = True,
@@ -1021,9 +1038,14 @@ class FlyBrowser:
         - Automatic obstacle detection and handling
         - Extraction verification for data quality
         - Schema-guided structured extraction
+        - Context-aware filtering and processing
 
         Args:
             query: Natural language query describing what to extract.
+            context: Additional context to inform extraction (optional):
+                - filters: Criteria to filter extracted data
+                - preferences: User preferences for data format/selection
+                - constraints: Any constraints on extraction
             use_vision: Use vision-based extraction (default: False).
                 Set to True for visually complex pages where text extraction
                 might miss important layout information.
@@ -1050,6 +1072,12 @@ class FlyBrowser:
             ...     "Get the top 5 stories",
             ...     schema={"type": "array", "items": {"type": "object"}}
             ... )
+            >>> 
+            >>> # With context for filtering
+            >>> result = await browser.extract(
+            ...     "Get product listings",
+            ...     context={"filters": {"price_max": 100, "category": "electronics"}}
+            ... )
         """
         from flybrowser.agents.response import AgentRequestResponse, create_response
         
@@ -1063,7 +1091,7 @@ class FlyBrowser:
             raise ValueError(f"Invalid extraction query: {error}")
 
         if self._mode == "server":
-            result = await self._client.extract(self._session_id, query, schema)
+            result = await self._client.extract(self._session_id, query, schema, context=context or {})
             if return_metadata:
                 return create_response(
                     success=result.get("success", True),
@@ -1106,7 +1134,7 @@ class FlyBrowser:
         if hasattr(self.react_agent.llm, 'reset_session_usage'):
             self.react_agent.llm.reset_session_usage()
         
-        # CRITICAL: Store current page context in agent memory BEFORE execution
+        # CRITICAL: Store current page context and user context in agent memory BEFORE execution
         # This lets the agent know what page it's on (e.g., after browser.goto())
         try:
             current_url = await self.page_controller.get_url()
@@ -1115,6 +1143,11 @@ class FlyBrowser:
                 self.react_agent.memory.working.set_scratch("current_url", current_url)
                 self.react_agent.memory.working.set_scratch("current_title", current_title or "")
                 logger.debug(f"[extract] Page context: {current_url} - {current_title}")
+            
+            # Store user-provided context for tool access
+            if context:
+                self.react_agent.memory.working.set_scratch("user_context", context)
+                logger.debug(f"[extract] User context: {list(context.keys())}")
         except Exception as e:
             logger.debug(f"[extract] Could not get page context: {e}")
         
@@ -1166,6 +1199,7 @@ class FlyBrowser:
     async def act(
         self,
         instruction: str,
+        context: Optional[Dict[str, Any]] = None,
         use_vision: bool = True,
         return_metadata: bool = True,
         max_iterations: int = 10,
@@ -1180,9 +1214,14 @@ class FlyBrowser:
         - Multi-step action planning
         - Automatic retry on failure
         - PII-safe credential handling
+        - Form filling and file uploads via context
 
         Args:
             instruction: Natural language instruction (e.g., "click the login button")
+            context: Additional context for the action (optional):
+                - form_data: Dict of field_name -> value for form filling
+                - files: List of {"field": str, "path": str, "mime_type": str} for uploads
+                - constraints: Any other contextual information
             use_vision: Use vision for element detection (default: True).
                 Vision helps accurately locate elements on the page.
             return_metadata: Return AgentRequestResponse with full metadata
@@ -1200,7 +1239,18 @@ class FlyBrowser:
         Example:
             >>> result = await browser.act("click the login button")
             >>> await browser.act("type 'hello' in the search box")
-            >>> await browser.act("scroll down")
+            >>> 
+            >>> # With form data context
+            >>> await browser.act(
+            ...     "Fill and submit the login form",
+            ...     context={"form_data": {"email": "user@example.com", "password": "***"}}
+            ... )
+            >>> 
+            >>> # With file upload
+            >>> await browser.act(
+            ...     "Upload resume file",
+            ...     context={"files": [{"field": "resume", "path": "resume.pdf"}]}
+            ... )
         """
         from flybrowser.agents.response import create_response
         
@@ -1214,7 +1264,7 @@ class FlyBrowser:
             raise ValueError(f"Invalid action instruction: {error}")
 
         if self._mode == "server":
-            result = await self._client.action(self._session_id, instruction)
+            result = await self._client.action(self._session_id, instruction, context=context or {})
             if return_metadata:
                 return create_response(
                     success=result.get("success", False),
@@ -1250,7 +1300,7 @@ class FlyBrowser:
         if hasattr(self.react_agent.llm, 'reset_session_usage'):
             self.react_agent.llm.reset_session_usage()
         
-        # CRITICAL: Store current page context in agent memory BEFORE execution
+        # CRITICAL: Store current page context and user context in agent memory BEFORE execution
         try:
             current_url = await self.page_controller.get_url()
             current_title = await self.page_controller.get_title()
@@ -1258,6 +1308,11 @@ class FlyBrowser:
                 self.react_agent.memory.working.set_scratch("current_url", current_url)
                 self.react_agent.memory.working.set_scratch("current_title", current_title or "")
                 logger.debug(f"[act] Page context: {current_url} - {current_title}")
+            
+            # Store user-provided context for tool access
+            if context:
+                self.react_agent.memory.working.set_scratch("user_context", context)
+                logger.debug(f"[act] User context: {list(context.keys())}")
         except Exception as e:
             logger.debug(f"[act] Could not get page context: {e}")
         
@@ -1481,7 +1536,7 @@ class FlyBrowser:
         if hasattr(self.react_agent.llm, 'reset_session_usage'):
             self.react_agent.llm.reset_session_usage()
         
-        # CRITICAL: Store current page context in agent memory BEFORE execution
+        # CRITICAL: Store current page context and user context in agent memory BEFORE execution
         try:
             current_url = await self.page_controller.get_url()
             current_title = await self.page_controller.get_title()
@@ -1489,6 +1544,11 @@ class FlyBrowser:
                 self.react_agent.memory.working.set_scratch("current_url", current_url)
                 self.react_agent.memory.working.set_scratch("current_title", current_title or "")
                 logger.debug(f"[agent] Page context: {current_url} - {current_title}")
+            
+            # Store user-provided context for tool access
+            if context:
+                self.react_agent.memory.working.set_scratch("user_context", context)
+                logger.debug(f"[agent] User context: {list(context.keys())}")
         except Exception as e:
             logger.debug(f"[agent] Could not get page context: {e}")
         
@@ -1546,6 +1606,7 @@ class FlyBrowser:
     async def observe(
         self,
         query: str,
+        context: Optional[Dict[str, Any]] = None,
         return_selectors: bool = True,
         return_metadata: bool = True,
         max_iterations: int = 10,
@@ -1565,6 +1626,10 @@ class FlyBrowser:
         Args:
             query: Natural language description of what to find.
                 Example: "find the search bar", "locate all product cards"
+            context: Additional context for element search (optional):
+                - filters: Criteria to filter found elements
+                - constraints: Constraints on element selection
+                - region: Specific region of page to search
             return_selectors: Include CSS selectors in response (default: True).
             return_metadata: Return AgentRequestResponse with full metadata.
             max_iterations: Maximum iterations for observation (default: 10).
@@ -1581,6 +1646,12 @@ class FlyBrowser:
             >>> login_btn = await browser.observe("find the login button")
             >>> if login_btn:
             ...     await browser.act(f"click {login_btn[0]['selector']}")
+            >>> 
+            >>> # With context for filtering
+            >>> elements = await browser.observe(
+            ...     "find product cards",
+            ...     context={"filters": {"visible_only": True, "region": "main"}}
+            ... )
         """
         from flybrowser.agents.response import create_response
         
@@ -1591,7 +1662,7 @@ class FlyBrowser:
                 response = await self._client._request(
                     "POST",
                     f"/sessions/{self._session_id}/observe",
-                    json={"query": query, "return_selectors": return_selectors},
+                    json={"query": query, "return_selectors": return_selectors, "context": context or {}},
                 )
                 result = response or {}
                 if return_metadata:
@@ -1659,7 +1730,7 @@ class FlyBrowser:
             if hasattr(self.react_agent.llm, 'reset_session_usage'):
                 self.react_agent.llm.reset_session_usage()
             
-            # CRITICAL: Store current page context in agent memory BEFORE execution
+            # CRITICAL: Store current page context and user context in agent memory BEFORE execution
             try:
                 current_url = await self.page_controller.get_url()
                 current_title = await self.page_controller.get_title()
@@ -1667,6 +1738,11 @@ class FlyBrowser:
                     self.react_agent.memory.working.set_scratch("current_url", current_url)
                     self.react_agent.memory.working.set_scratch("current_title", current_title or "")
                     logger.debug(f"[observe] Page context: {current_url} - {current_title}")
+                
+                # Store user-provided context for tool access
+                if context:
+                    self.react_agent.memory.working.set_scratch("user_context", context)
+                    logger.debug(f"[observe] User context: {list(context.keys())}")
             except Exception as e:
                 logger.debug(f"[observe] Could not get page context: {e}")
             
