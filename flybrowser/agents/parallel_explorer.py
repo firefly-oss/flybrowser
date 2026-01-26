@@ -429,11 +429,23 @@ class ParallelPageExplorer:
             # Brief yield to allow analysis tasks to progress
             if analysis_tasks:
                 await asyncio.sleep(0.05)
-            elif not dag.is_complete() and not pending_analysis:
-                # Nothing in progress, check if truly done
-                if dag.get_pending_count() == 0:
+            
+            # Check if we're stuck with pending pages that will never be ready
+            if not dag.is_complete():
+                pending_count = dag.get_pending_count()
+                ready = dag.get_ready_batch(max_size=1)
+                
+                # If we have pending pages but none are ready, and nothing is in progress
+                if pending_count > 0 and not ready and not pending_analysis and not analysis_tasks:
+                    logger.warning(
+                        f"[Pipeline] Stuck: {pending_count} pages pending but none ready. "
+                        f"Likely waiting for parent pages that failed. Breaking."
+                    )
                     break
-                await asyncio.sleep(0.1)
+                
+                # If no pages pending at all and nothing in progress, we're done
+                if pending_count == 0 and not pending_analysis and not analysis_tasks:
+                    break
         
         # Wait for any remaining analysis tasks
         if analysis_tasks:
