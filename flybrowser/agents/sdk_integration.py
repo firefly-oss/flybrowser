@@ -137,8 +137,16 @@ class ReActBrowserAgent:
         self.config = agent_config or AgentConfig()
         self.execution_mode = execution_mode
         
-        # Initialize memory if enabled
-        self.memory = AgentMemory() if enable_memory else None
+        # Initialize memory if enabled, using config values for token limits
+        if enable_memory:
+            self.memory = AgentMemory(
+                context_window_budget=self.config.memory.context_window_budget,
+                max_extraction_budget_percent=self.config.memory.max_extraction_budget_percent,
+                max_extraction_tokens=self.config.memory.max_extraction_tokens,
+                max_single_extraction_chars=self.config.memory.max_single_extraction_chars,
+            )
+        else:
+            self.memory = None
         
         # Stealth components (can be set after construction)
         self.captcha_solver = None

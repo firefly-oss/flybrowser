@@ -807,9 +807,18 @@ class AgentMemory:
         context_window_budget: int = 64000,  # Modern LLMs have 128K+ context windows
         short_term_max_entries: int = 50,  # Keep more history
         long_term_max_patterns: int = 100,
+        # Extraction data limits (from MemoryConfig) - prevent token overflow
+        max_extraction_budget_percent: float = 0.20,  # Max 20% of budget for extractions
+        max_extraction_tokens: int = 4000,  # Hard cap on total extraction tokens
+        max_single_extraction_chars: int = 8000,  # Max chars per single extraction (~2K tokens)
     ) -> None:
         """Initialize agent memory system."""
         self.context_window_budget = context_window_budget
+        
+        # Store extraction limits for use in format_for_prompt
+        self.max_extraction_budget_percent = max_extraction_budget_percent
+        self.max_extraction_tokens = max_extraction_tokens
+        self.max_single_extraction_chars = max_single_extraction_chars
 
         # Initialize memory subsystems
         self.short_term = ShortTermMemory(max_entries=short_term_max_entries)
@@ -999,17 +1008,96 @@ class AgentMemory:
 
         # 2. CRITICAL: Extraction data from working memory scratch pad
         # This is the most important data for text-only mode to avoid hallucination
-        # BUT we must limit it to avoid token overflow (max 25% of budget for extractions)
-        max_extraction_budget = remaining_budget // 4  # 25% of remaining budget
+        # Strategy: Prefer compressed summaries when available, fall back to truncated raw data
+        #
+        # SPECIAL HANDLING FOR URL-CRITICAL DATA:
+        # Tools like search, get_page_state, get_attribute return URLs/selectors
+        # that the agent MUST have to navigate. These need special formatting.
+        extraction_budget_from_percent = int(remaining_budget * self.max_extraction_budget_percent)
+        max_extraction_budget = min(extraction_budget_from_percent, self.max_extraction_tokens)
         max_extraction_chars = max_extraction_budget * 4  # ~4 chars per token
-        max_single_extraction_chars = min(max_extraction_chars // 2, 32000)  # Max 32K chars per extraction
+        max_single_extraction_chars = self.max_single_extraction_chars
         
         extraction_lines = []
         total_extraction_chars = 0
-        for key, value in self.working._scratch_pad.items():
-            if key.startswith("extracted_"):
+        
+        # Tools that return URL-critical data that must be preserved
+        URL_CRITICAL_TOOLS = {
+            "search", "search_human", "search_api", "search_rank",
+            "get_page_state", "get_attribute"
+        }
+        # Tools that may contain URL data in specific fields (handle specially)
+        URL_CONTAINING_TOOLS = {
+            "extract_text": ["navigation_links", "footer_links"],
+        }
+        
+        # Collect extraction keys (excluding compressed versions)
+        extraction_keys = [
+            key for key in self.working._scratch_pad.keys()
+            if key.startswith("extracted_") and not key.endswith("_compressed")
+        ]
+        
+        # Sort by timestamp to process most recent first
+        # Key format: extracted_toolname_timestamp
+        def get_timestamp(key: str) -> int:
+            parts = key.rsplit("_", 1)
+            try:
+                return int(parts[-1])
+            except (ValueError, IndexError):
+                return 0
+        
+        sorted_extraction_keys = sorted(extraction_keys, key=get_timestamp, reverse=True)
+        
+        # For the most recent extraction, prefer RAW data (agent needs full context)
+        # For older extractions, prefer COMPRESSED to save tokens
+        most_recent_key = sorted_extraction_keys[0] if sorted_extraction_keys else None
+        
+        for key in sorted_extraction_keys:
+            value = self.working._scratch_pad.get(key)
+            compressed_key = f"{key}_compressed"
+            compressed_value = self.working._scratch_pad.get(compressed_key)
+            
+            # Determine if this extraction contains URL-critical data
+            # Key format: extracted_toolname_timestamp
+            tool_name = key.replace("extracted_", "").rsplit("_", 1)[0]
+            is_url_critical = tool_name in URL_CRITICAL_TOOLS
+            
+            # Decision logic:
+            # - Most recent: prefer raw (agent needs full context for current reasoning)
+            # - URL-critical: ALWAYS use raw with smart URL extraction (never lose URLs)
+            # - Older non-critical: prefer compressed (save tokens but retain key facts)
+            is_most_recent = (key == most_recent_key)
+            use_compressed = (
+                compressed_value and 
+                isinstance(compressed_value, dict) and 
+                not is_most_recent and
+                not is_url_critical  # NEVER use compressed for URL-critical data
+            )
+            
+            if use_compressed:
+                # Use the compressed summary for older non-critical extractions
+                try:
+                    from flybrowser.llm.context_compressor import CompressedContent
+                    compressed = CompressedContent.from_dict(compressed_value)
+                    value_str = compressed.format_for_prompt()
+                    extraction_lines.append(f"### {key} (compressed)")
+                    extraction_lines.append(value_str)
+                    total_extraction_chars += len(f"### {key} (compressed)\n") + len(value_str)
+                    continue
+                except Exception:
+                    pass  # Fall back to raw data
+            
+            # For URL-critical data, use smart formatting that preserves URLs
+            if is_url_critical and isinstance(value, dict):
+                value_str = self._format_url_critical_data(value, tool_name, max_single_extraction_chars)
+            # Special handling for tools that contain URL data in specific fields
+            elif tool_name in URL_CONTAINING_TOOLS and isinstance(value, dict):
+                value_str = self._format_url_containing_data(
+                    value, tool_name, URL_CONTAINING_TOOLS[tool_name], max_single_extraction_chars
+                )
+            else:
+                # Use raw data with truncation if no compression available
                 value_str = str(value)
-                # Truncate large extraction values to prevent token overflow
                 if len(value_str) > max_single_extraction_chars:
                     # Smart truncation: keep beginning and end for context
                     head_size = max_single_extraction_chars * 2 // 3
@@ -1019,21 +1107,21 @@ class AgentMemory:
                         f"\n\n... [TRUNCATED: {len(value_str) - max_single_extraction_chars:,} chars omitted] ...\n\n" +
                         value_str[-tail_size:]
                     )
-                
-                # Check if we'd exceed total extraction budget
-                entry_chars = len(f"### {key}\n") + len(value_str)
-                if total_extraction_chars + entry_chars > max_extraction_chars:
-                    # Truncate this entry to fit remaining budget
-                    remaining_chars = max_extraction_chars - total_extraction_chars - len(f"### {key}\n") - 50
-                    if remaining_chars > 500:  # Only add if meaningful content fits
-                        value_str = value_str[:remaining_chars] + "\n... [truncated to fit context]"
-                        extraction_lines.append(f"### {key}")
-                        extraction_lines.append(value_str)
-                    break  # No more room for extractions
-                
-                extraction_lines.append(f"### {key}")
-                extraction_lines.append(value_str)
-                total_extraction_chars += entry_chars
+            
+            # Check if we'd exceed total extraction budget
+            entry_chars = len(f"### {key}\n") + len(value_str)
+            if total_extraction_chars + entry_chars > max_extraction_chars:
+                # Truncate this entry to fit remaining budget
+                remaining_chars = max_extraction_chars - total_extraction_chars - len(f"### {key}\n") - 50
+                if remaining_chars > 500:  # Only add if meaningful content fits
+                    value_str = value_str[:remaining_chars] + "\n... [truncated to fit context]"
+                    extraction_lines.append(f"### {key}")
+                    extraction_lines.append(value_str)
+                break  # No more room for extractions
+            
+            extraction_lines.append(f"### {key}")
+            extraction_lines.append(value_str)
+            total_extraction_chars += entry_chars
         
         if extraction_lines:
             extraction_content = "## Extracted Data (from previous tool calls - USE THIS DATA!)\n" + "\n".join(extraction_lines)
@@ -1097,6 +1185,239 @@ class AgentMemory:
             add_section(user_context)
 
         return "\n\n".join(sections) if sections else ""
+    
+    def _format_url_critical_data(
+        self,
+        data: Dict[str, Any],
+        tool_name: str,
+        max_chars: int,
+    ) -> str:
+        """
+        Smart formatting for URL-critical extraction data.
+        
+        Extracts and preserves ALL URLs while summarizing other content.
+        This ensures the agent never loses navigation targets.
+        
+        Args:
+            data: Extraction result dictionary
+            tool_name: Name of the tool that produced this data
+            max_chars: Maximum characters for output
+            
+        Returns:
+            Formatted string with URLs preserved
+        """
+        lines = []
+        urls_collected = []
+        
+        # Extract URLs based on tool type
+        if tool_name in ("search", "search_human", "search_api"):
+            # Search results - extract all result URLs
+            results = data.get("results", data.get("search_results", []))
+            if isinstance(results, list):
+                lines.append(f"**Search Results ({len(results)} found):**")
+                for i, result in enumerate(results[:20], 1):  # Limit to 20
+                    if isinstance(result, dict):
+                        title = result.get("title", "Untitled")[:80]
+                        url = result.get("url", result.get("link", ""))
+                        snippet = result.get("snippet", result.get("description", ""))[:150]
+                        if url:
+                            urls_collected.append(url)
+                            lines.append(f"{i}. [{title}]({url})")
+                            if snippet:
+                                lines.append(f"   {snippet}")
+            
+            # Answer box if present
+            answer_box = data.get("answer_box")
+            if answer_box:
+                lines.append(f"\n**Answer Box**: {str(answer_box)[:300]}")
+        
+        elif tool_name == "search_rank":
+            # Ranked results - preserve ranked URLs
+            ranked = data.get("ranked_results", [])
+            if isinstance(ranked, list):
+                lines.append(f"**Ranked Results ({len(ranked)} items):**")
+                for i, result in enumerate(ranked[:10], 1):
+                    if isinstance(result, dict):
+                        title = result.get("title", "Untitled")[:80]
+                        url = result.get("url", "")
+                        score = result.get("relevance_score", 0)
+                        reason = result.get("reason", "")[:100]
+                        if url:
+                            urls_collected.append(url)
+                            lines.append(f"{i}. [{title}]({url}) - Score: {score:.2f}")
+                            if reason:
+                                lines.append(f"   Reason: {reason}")
+            
+            # Recommendations
+            actions = data.get("recommended_actions", [])
+            if actions:
+                lines.append(f"\n**Recommendations**: {', '.join(actions[:5])}")
+        
+        elif tool_name == "get_page_state":
+            # Page state - preserve navigation links and buttons
+            url = data.get("url", "")
+            title = data.get("title", "")
+            lines.append(f"**Page**: {title}")
+            lines.append(f"**URL**: {url}")
+            
+            # Navigation links (CRITICAL)
+            nav_links = data.get("navigation_links", [])
+            if nav_links:
+                lines.append(f"\n**Navigation Links ({len(nav_links)}):**")
+                for link in nav_links[:30]:  # Limit to 30
+                    if isinstance(link, dict):
+                        text = link.get("text", "")[:50]
+                        href = link.get("href", link.get("url", ""))
+                        if href:
+                            urls_collected.append(href)
+                            lines.append(f"- {text}: {href}")
+            
+            # Other links
+            other_links = data.get("other_links", [])
+            if other_links:
+                lines.append(f"\n**Other Links ({len(other_links)}):**")
+                for link in other_links[:15]:  # Limit to 15
+                    if isinstance(link, dict):
+                        text = link.get("text", "")[:50]
+                        href = link.get("href", link.get("url", ""))
+                        if href:
+                            urls_collected.append(href)
+                            lines.append(f"- {text}: {href}")
+            
+            # Buttons (important for interaction)
+            buttons = data.get("buttons", [])
+            if buttons:
+                lines.append(f"\n**Buttons ({len(buttons)}):**")
+                for btn in buttons[:20]:
+                    if isinstance(btn, dict):
+                        text = btn.get("text", btn.get("label", ""))[:50]
+                        selector = btn.get("selector", "")[:100]
+                        lines.append(f"- {text} ({selector})")
+        
+        elif tool_name == "get_attribute":
+            # Attribute value - likely a URL
+            attr = data.get("attribute", "")
+            value = data.get("value", "")
+            selector = data.get("selector", "")
+            lines.append(f"**Attribute**: {attr}")
+            lines.append(f"**Value**: {value}")
+            lines.append(f"**Selector**: {selector}")
+            if value and (value.startswith("http") or value.startswith("/")):
+                urls_collected.append(value)
+        
+        # Build output
+        output = "\n".join(lines)
+        
+        # If output is too long, prioritize URLs
+        if len(output) > max_chars:
+            # Create compressed version with ALL URLs preserved
+            compressed_lines = []
+            compressed_lines.append(f"**{tool_name} result (compressed, {len(urls_collected)} URLs):**")
+            
+            # Always include all URLs
+            if urls_collected:
+                compressed_lines.append("\n**All URLs (IMPORTANT for navigation):**")
+                for url in urls_collected[:50]:  # Hard limit 50 URLs
+                    compressed_lines.append(f"- {url}")
+            
+            # Add truncated content summary
+            remaining_chars = max_chars - len("\n".join(compressed_lines)) - 100
+            if remaining_chars > 200:
+                summary = output[:remaining_chars] + "...[content truncated, URLs preserved]"
+                compressed_lines.insert(1, summary)
+            
+            output = "\n".join(compressed_lines)
+        
+        return output
+    
+    def _format_url_containing_data(
+        self,
+        data: Dict[str, Any],
+        tool_name: str,
+        url_fields: List[str],
+        max_chars: int,
+    ) -> str:
+        """
+        Format extraction data that contains URL fields, preserving those URLs.
+        
+        This handles tools like extract_text that have a mix of compressible text
+        content and URL-critical fields (like navigation_links).
+        
+        Args:
+            data: Extraction result dictionary
+            tool_name: Name of the tool
+            url_fields: List of field names that contain URL data
+            max_chars: Maximum characters for output
+            
+        Returns:
+            Formatted string with URLs preserved from url_fields
+        """
+        lines = []
+        urls_collected = []
+        
+        # First, extract and preserve URLs from critical fields
+        for field_name in url_fields:
+            field_data = data.get(field_name, [])
+            if isinstance(field_data, list) and field_data:
+                lines.append(f"\n**{field_name.replace('_', ' ').title()} ({len(field_data)}):**")
+                for item in field_data[:25]:  # Limit to 25 items per field
+                    if isinstance(item, dict):
+                        text = item.get("text", "")[:50]
+                        href = item.get("href", item.get("url", ""))
+                        if href:
+                            urls_collected.append(href)
+                            lines.append(f"- {text}: {href}")
+                    elif isinstance(item, str) and (item.startswith("http") or item.startswith("/")):
+                        urls_collected.append(item)
+                        lines.append(f"- {item}")
+        
+        # Build URL section output first (prioritized)
+        url_section = "\n".join(lines)
+        
+        # Calculate remaining space for other content
+        url_section_len = len(url_section)
+        remaining_space = max_chars - url_section_len - 200  # Leave margin
+        
+        # Include non-URL fields with remaining space
+        other_content = []
+        if remaining_space > 500:
+            for key, value in data.items():
+                if key in url_fields:
+                    continue  # Already handled
+                if key in ("text", "raw_text", "main_content"):
+                    # Compressible text content - include truncated
+                    if isinstance(value, str):
+                        content = value[:remaining_space // 2]
+                        other_content.append(f"\n**{key}** (truncated): {content}...")
+                        remaining_space -= len(content) + 50
+                    elif isinstance(value, list):
+                        items = [str(v)[:100] for v in value[:5]]
+                        other_content.append(f"\n**{key}**: {', '.join(items)}...")
+                elif key in ("title", "url", "selector", "message"):
+                    # Short metadata fields - include fully
+                    other_content.append(f"**{key}**: {value}")
+        
+        # Combine: metadata first, then URL-critical fields, then text content
+        final_lines = []
+        
+        # Add key metadata
+        title = data.get("title", "")
+        page_url = data.get("url", "")
+        if title:
+            final_lines.append(f"**Page**: {title}")
+        if page_url:
+            final_lines.append(f"**URL**: {page_url}")
+        
+        # Add URL-critical fields
+        if url_section:
+            final_lines.append(url_section)
+        
+        # Add other content if space permits
+        for content in other_content:
+            if len("\n".join(final_lines)) + len(content) < max_chars:
+                final_lines.append(content)
+        
+        return "\n".join(final_lines)
 
     def get_failure_count(self) -> int:
         """Get the count of failed entries."""

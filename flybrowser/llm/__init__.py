@@ -45,6 +45,13 @@ from flybrowser.llm.chunking import (
     JSONChunker,
     get_chunker,
 )
+from flybrowser.llm.context_compressor import (
+    ContextCompressor,
+    CompressedContent,
+    CompressedHistory,
+    ContentType as CompressionContentType,  # Renamed to avoid conflict with chunking.ContentType
+    estimate_compression_benefit,
+)
 
 __all__ = [
     # Base classes
@@ -74,5 +81,11 @@ __all__ = [
     "HTMLChunker",
     "JSONChunker",
     "get_chunker",
+    # Context compression
+    "ContextCompressor",
+    "CompressedContent",
+    "CompressedHistory",
+    "CompressionContentType",
+    "estimate_compression_benefit",
 ]
 

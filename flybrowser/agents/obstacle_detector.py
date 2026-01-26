@@ -91,6 +91,7 @@ class ObstacleDetector:
         page: Page,
         llm: BaseLLMProvider,
         config: Optional[ObstacleDetectorConfig] = None,
+        conversation_manager: Optional["ConversationManager"] = None,
     ):
         """
         Initialize obstacle detector.
@@ -99,11 +100,14 @@ class ObstacleDetector:
             page: Playwright page instance
             llm: LLM provider instance
             config: Configuration for obstacle detector (uses defaults if not provided)
+            conversation_manager: Optional shared ConversationManager for unified
+                                  token tracking (if not provided, one will be created)
         """
         self.page = page
         self.llm = llm
         self.config = config or ObstacleDetectorConfig()
         self.prompt_registry = PromptRegistry()
+        self._conversation_manager = conversation_manager
     
     @property
     def aggressive(self) -> bool:
@@ -371,7 +375,12 @@ class ObstacleDetector:
             logger.debug(f"[ObstacleDetector] Calling AI with template: {template_name}")
             
             # Use StructuredLLMWrapper for reliable JSON output with repair
-            wrapper = StructuredLLMWrapper(self.llm, max_repair_attempts=2)
+            # Share ConversationManager with ReActAgent if provided for unified token tracking
+            wrapper = StructuredLLMWrapper(
+                self.llm, 
+                max_repair_attempts=2,
+                conversation_manager=self._conversation_manager,
+            )
             
             try:
                 # Call LLM with vision if available

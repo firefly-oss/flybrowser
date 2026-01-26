@@ -211,6 +211,12 @@ class LLMConfig:
     # The repair mechanism asks the LLM to fix its output using the original context
     max_repair_attempts: int = 2  # Maximum repair attempts before failing
     repair_temperature: float = 0.1  # Low temperature for consistent repairs
+    
+    # Token budget limits for conversation management
+    # These help prevent exceeding API rate limits (e.g., OpenAI 30K TPM orgs)
+    max_request_tokens: int = 25000  # Hard limit per single LLM request (input tokens)
+    max_context_tokens: int = 20000  # Soft limit for context/prompt content
+    context_cleanup_threshold: float = 0.15  # Cleanup when free budget drops below this %
 
 
 @dataclass
@@ -362,12 +368,40 @@ class ElementInteractionConfig:
 
 @dataclass
 class MemoryConfig:
-    """Configuration for agent memory system."""
+    """Configuration for agent memory system.
     
-    # Memory limits - Optimized for context window usage
-    max_entries: int = 100  # Total memory cap
-    max_short_term_entries: int = 50  # Recent context (last 10-15 steps)
-    max_working_memory_entries: int = 20  # Active task focus
+    IMPORTANT: These limits are designed for browser automation agents that need to:
+    - Store full page content extractions (can be 10K+ tokens)
+    - Track multiple search results with URLs
+    - Maintain navigation state with many links
+    - Handle multi-step complex tasks with rich context
+    
+    The defaults are set high to support comprehensive web automation.
+    Adjust down if you're hitting rate limits or cost concerns.
+    """
+    
+    # Memory limits - High capacity for complex automation
+    max_entries: int = 200  # Total memory cap (support long sessions)
+    max_short_term_entries: int = 100  # Recent context (many steps in automation)
+    max_working_memory_entries: int = 50  # Active task focus (multiple extractions)
+    
+    # Context window budget for memory formatting
+    # For 128K context models like GPT-4.1, we can use more context
+    # This controls how much memory context is included in prompts
+    context_window_budget: int = 64000  # Large budget for rich context (half of 128K)
+    
+    # Extraction data limits - Generous for full page content
+    # Browser automation often needs complete page data
+    max_extraction_budget_percent: float = 0.40  # 40% of budget for extractions
+    max_extraction_tokens: int = 16000  # Higher cap for full page extractions
+    max_single_extraction_chars: int = 32000  # ~8K tokens per extraction
+    
+    # Intelligent compression settings - Use LLM to compress large content
+    # This preserves important information instead of truncating
+    enable_intelligent_compression: bool = True  # Use LLM to summarize large extractions
+    compression_threshold_tokens: int = 4000  # Compress extractions larger than this
+    history_compression_threshold: int = 15  # Compress when history exceeds N messages
+    max_compressed_summary_tokens: int = 2000  # Max tokens for compressed summary (handles complex schemas)
     
     # Retrieval - Balance relevance vs context size
     relevance_threshold: float = 0.6  # Higher bar for inclusion

@@ -308,12 +308,21 @@ class ExecutionPlan:
             "metadata": self.metadata,
         }
     
-    def format_for_prompt(self) -> str:
+    def format_for_prompt(
+        self,
+        available_data: Optional[List[str]] = None,
+        completed_actions: Optional[List[str]] = None,
+    ) -> str:
         """
         Format plan for LLM prompt.
         
         Provides structured context about the current execution plan,
-        highlighting the current phase and goal.
+        highlighting the current phase and goal, and what data is already
+        available to avoid redundant work.
+        
+        Args:
+            available_data: List of extracted data keys available in memory
+            completed_actions: List of actions completed in previous phases
         """
         current = self.get_current_phase()
         
@@ -340,6 +349,26 @@ class ExecutionPlan:
                 lines.append(f"Current Goal: {current_goal.description}")
                 lines.append(f"Success Criteria: {current_goal.success_criteria}")
         
+        # CRITICAL: Show what data is already available to prevent redundant work
+        if available_data:
+            lines.append("")
+            lines.append("### ⚠️ DATA ALREADY AVAILABLE (check before acting!):")
+            lines.append("The following data has been extracted in previous steps:")
+            for data_key in available_data:
+                # Extract meaningful description from key (e.g., extracted_extract_text_123 -> text extraction)
+                desc = data_key.replace("extracted_", "").rsplit("_", 1)[0].replace("_", " ")
+                lines.append(f"  • {data_key} ({desc})")
+            lines.append("")
+            lines.append("**→ If this data satisfies your current goal, call `complete` immediately!**")
+            lines.append("**→ Do NOT extract the same data again - use what's in Extracted Data section below.**")
+        
+        # Show what actions were completed previously
+        if completed_actions:
+            lines.append("")
+            lines.append("### Previous Phase Actions:")
+            for action in completed_actions[-5:]:  # Last 5 actions
+                lines.append(f"  ✓ {action}")
+        
         return "\n".join(lines)
 
 
@@ -361,6 +390,7 @@ class TaskPlanner:
         prompt_manager: PromptManager,
         model_capabilities: Optional[List[Any]] = None,
         config: Optional[Any] = None,
+        conversation_manager: Optional["ConversationManager"] = None,
     ) -> None:
         """
         Initialize the task planner.
@@ -370,11 +400,14 @@ class TaskPlanner:
             prompt_manager: Prompt manager for templates
             model_capabilities: Model capabilities for capability-aware planning
             config: AgentConfig for planning parameters (temperature, tokens)
+            conversation_manager: Optional shared ConversationManager for unified
+                                  token tracking (if not provided, one will be created)
         """
         self.llm = llm_provider
         self.prompt_manager = prompt_manager
         self.model_capabilities = model_capabilities or []
         self.config = config
+        self._conversation_manager = conversation_manager
     
     def _format_capability_context(self) -> Dict[str, Any]:
         """
@@ -526,7 +559,12 @@ class TaskPlanner:
                 logger.debug(f"[PLANNING STATIC] max_tokens={planning_tokens}")
             
             # Use StructuredLLMWrapper for reliable JSON output with repair
-            wrapper = StructuredLLMWrapper(self.llm, max_repair_attempts=2)
+            # Share ConversationManager with ReActAgent if provided for unified token tracking
+            wrapper = StructuredLLMWrapper(
+                self.llm, 
+                max_repair_attempts=2,
+                conversation_manager=self._conversation_manager,
+            )
             
             try:
                 plan_data = await wrapper.generate_structured(
