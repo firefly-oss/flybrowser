@@ -1283,10 +1283,11 @@ class SitemapGraph:
         Returns:
             Formatted string showing exploration progress
         """
-        lines = ["##  Site Exploration Status"]
+        lines = ["##  Site Exploration Status (Navigation Tracking)"]
+        lines.append("_Note: This tracks VISITED pages. Check 'Extracted Data' section for text extraction status._")
         
         # Overall progress
-        lines.append(f"**Progress**: {self.visited_count}/{self.total_count} pages visited")
+        lines.append(f"\n**Progress**: {self.visited_count}/{self.total_count} pages visited")
         
         if self.pending_count > 0:
             lines.append(f"**Remaining**: {self.pending_count} pages to visit")

@@ -11,18 +11,20 @@ tools:
   # System Tools
   complete:
     name: "complete"
-    description: "Signal that the task has been completed successfully. Use this when you have accomplished the goal."
+    description: "Signal that the task has been completed successfully. Use this when you have accomplished the goal. IMPORTANT: For information extraction tasks, include comprehensive structured data in the 'result' parameter - not just summaries."
     category: "SYSTEM"
     safety_level: "SAFE"
     parameters:
       - name: "summary"
         type: "string"
-        description: "A summary of what was accomplished"
+        description: "A brief summary of what was accomplished"
         required: true
       - name: "result"
         type: "object"
-        description: "Optional structured result data"
+        description: "Structured result data. For extraction tasks, include ALL extracted information with full details (names, descriptions, prices, contacts, etc.). Use nested objects and arrays for complex data."
         required: false
+    examples:
+      - 'complete({"summary": "Extracted business information from 3 pages", "result": {"company": {...}, "services": [{"name": "...", "description": "...", "price": "..."}], "contact": {"email": "...", "phone": "..."}}})'
 
   fail:
     name: "fail"
@@ -121,7 +123,7 @@ tools:
     parameters:
       - name: "selector"
         type: "string"
-        description: "CSS selector (e.g., '#submit', '.btn-primary', 'button[type=submit]') or natural language description"
+        description: "CSS selector (e.g., '#submit', '.btn-primary', 'button[type=submit]'), XPath (e.g., '//button[text()=\"Submit\"]'), or natural language description. CRITICAL: When using XPath with text, ALWAYS use DOUBLE quotes for string literals to avoid syntax errors with special characters."
         required: true
       - name: "use_ai"
         type: "boolean"
@@ -130,6 +132,7 @@ tools:
     examples:
       - 'click({"selector": "#login-button"}) - Click by ID'
       - 'click({"selector": "button.submit"}) - Click by class'
+      - 'click({"selector": "//a[contains(text(),\"About\")]"}) - XPath with text (double quotes)'
       - 'click({"selector": "Sign In", "use_ai": true}) - AI finds button by text'
 
   type_text:
@@ -416,18 +419,18 @@ tools:
   # Extraction Tools
   extract_text:
     name: "extract_text"
-    description: "Extract text content from any element on the page. Returns visible text only (not HTML). Use 'body' selector to get all page text. For specific content, target the element's CSS selector."
+    description: "PRIMARY CONTENT EXTRACTION TOOL - Use to get actual text content from pages (works in both VLM and text-only modes). Returns structured text with headings, navigation, and main content. Call with NO selector to get full page content. IMPORTANT: PageMap only shows page structure - use extract_text to get the ACTUAL TEXT content you need!"
     category: "EXTRACTION"
     safety_level: "SAFE"
     parameters:
       - name: "selector"
         type: "string"
-        description: "CSS selector of element (e.g., 'body', 'h1', '.content', '#main-text', 'article')"
-        required: true
+        description: "Optional CSS selector. Omit for full page extraction (recommended for information tasks). Use specific selector for targeted content (e.g., '.article', '#main')."
+        required: false
     examples:
-      - 'extract_text({"selector": "body"}) - Get all page text'
-      - 'extract_text({"selector": "h1"}) - Get main heading'
-      - 'extract_text({"selector": ".price"}) - Extract price text'
+      - 'extract_text({}) - Get full page content (headings, nav, main content) - USE THIS!'
+      - 'extract_text({"selector": "main"}) - Extract main content area only'
+      - 'extract_text({"selector": ".product-description"}) - Extract specific section'
 
   screenshot:
     name: "screenshot"
