@@ -298,7 +298,7 @@ def print_summary(keep_data: bool, remove_all: bool) -> None:
     print_info("To reinstall FlyBrowser:")
     print("  curl -fsSL https://get.flybrowser.dev | bash")
     print("  # or")
-    print("  git clone https://github.com/firefly-research/flybrowser && cd flybrowser && ./install.sh")
+    print("  git clone https://github.com/fireflyresearch/flybrowser && cd flybrowser && ./install.sh")
     print()
 
 

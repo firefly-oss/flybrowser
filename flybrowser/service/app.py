@@ -211,7 +211,7 @@ FlyBrowser provides a powerful API for browser automation with built-in support 
 
 ## Resources
 
-- [GitHub Repository](https://github.com/firefly-research/flybrowsers)
+- [GitHub Repository](https://github.com/fireflyresearch/flybrowsers)
 - [Documentation](https://flybrowser.dev/docs)
 - [Support](mailto:support@flybrowser.dev)
 """

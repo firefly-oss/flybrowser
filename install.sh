@@ -113,7 +113,7 @@ RUN_WIZARD=true
 FORCE_PIP=false
 UNINSTALL=false
 FLYBROWSER_VERSION="latest"
-GITHUB_REPO="firefly-research/flybrowsers"
+GITHUB_REPO="fireflyresearch/flybrowsers"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main"
 
 # Installation mode: venv, system, or user
@@ -1243,7 +1243,7 @@ Environment Variables:
   FLYBROWSER_ACCEPT_DEFAULTS   Accept all defaults (non-interactive)
 
 Documentation: https://flybrowser.dev/docs
-GitHub: https://github.com/firefly-research/flybrowsers
+GitHub: https://github.com/fireflyresearch/flybrowsers
 EOF
 }
 

@@ -160,7 +160,7 @@ async with FlyBrowser(llm_provider="openai", api_key=os.getenv("OPENAI_API_KEY")
 curl -fsSL https://get.flybrowser.dev | bash
 
 # Or from source
-git clone https://github.com/firefly-research/flybrowser.git
+git clone https://github.com/fireflyresearch/flybrowser.git
 cd flybrowser
 ./install.sh
 ```
@@ -1496,8 +1496,8 @@ Inspired by [Stagehand](https://github.com/browserbase/stagehand).
 
 - **Documentation**: [Full docs](docs/index.md)
 - **Discord**: [Join our community](https://discord.gg/flybrowser)
-- **Issues**: [GitHub Issues](https://github.com/firefly-research/flybrowser/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/firefly-research/flybrowser/discussions)
+- **Issues**: [GitHub Issues](https://github.com/fireflyresearch/flybrowser/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/fireflyresearch/flybrowser/discussions)
 - **Email**: support@flybrowser.dev
 
 ---
@@ -1508,7 +1508,7 @@ Inspired by [Stagehand](https://github.com/browserbase/stagehand).
 
 <p align="center">
   <a href="https://flybrowser.dev">Website</a> •
-  <a href="https://github.com/firefly-research/flybrowser">GitHub</a> •
+  <a href="https://github.com/fireflyresearch/flybrowser">GitHub</a> •
   <a href="https://discord.gg/flybrowser">Discord</a> •
   <a href="https://twitter.com/flybrowser">Twitter</a>
 </p>

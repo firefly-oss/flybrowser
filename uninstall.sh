@@ -502,7 +502,7 @@ print_summary() {
     print_info "To reinstall FlyBrowser:"
     echo "  curl -fsSL https://get.flybrowser.dev | bash"
     echo "  # or"
-    echo "  git clone https://github.com/firefly-research/flybrowser && cd flybrowser && ./install.sh"
+    echo "  git clone https://github.com/fireflyresearch/flybrowser && cd flybrowser && ./install.sh"
     echo ""
 }
 

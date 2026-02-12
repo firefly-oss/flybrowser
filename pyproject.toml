@@ -46,9 +46,9 @@ dependencies = [
 [project.urls]
 Homepage = "https://flybrowser.dev"
 Documentation = "https://flybrowser.dev/docs"
-Repository = "https://github.com/firefly-research/flybrowsers"
-Issues = "https://github.com/firefly-research/flybrowsers/issues"
-Changelog = "https://github.com/firefly-research/flybrowsers/blob/main/CHANGELOG.md"
+Repository = "https://github.com/fireflyresearch/flybrowsers"
+Issues = "https://github.com/fireflyresearch/flybrowsers/issues"
+Changelog = "https://github.com/fireflyresearch/flybrowsers/blob/main/CHANGELOG.md"
 
 [project.scripts]
 # Main unified CLI (recommended)

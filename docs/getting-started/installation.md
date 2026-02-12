@@ -47,7 +47,7 @@ uv run playwright install chromium
 To install from source for development or to get the latest changes:
 
 ```bash
-git clone https://github.com/firefly-research/flybrowser.git
+git clone https://github.com/fireflyresearch/flybrowser.git
 cd flybrowser
 pip install -e .
 playwright install chromium
