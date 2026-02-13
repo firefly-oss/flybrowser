@@ -309,6 +309,7 @@ def create_parser() -> argparse.ArgumentParser:
 Commands:
   (none)      Launch interactive REPL (default)
   repl        Launch interactive REPL
+  session     Manage browser sessions
   setup       Installation and configuration wizard
   serve       Start the FlyBrowser API service
   cluster     Cluster management commands
@@ -318,6 +319,8 @@ Commands:
 
 Examples:
   flybrowser                          # Start REPL
+  flybrowser session create           # Create a session
+  flybrowser session list             # List sessions
   flybrowser setup configure          # Interactive setup
   flybrowser serve --port 8000        # Start server
   flybrowser cluster status           # Check cluster
@@ -514,7 +517,11 @@ Documentation: https://flybrowser.dev/docs
     recordings_clean_parser.add_argument("--older-than", default="7d", help="Delete recordings older than (e.g., 7d, 30d)")
     recordings_clean_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
     recordings_clean_parser.set_defaults(func=cmd_recordings_clean)
-    
+
+    # session commands
+    from flybrowser.cli.session import add_session_subparser
+    add_session_subparser(subparsers)
+
     return parser
 
 
