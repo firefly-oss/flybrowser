@@ -223,7 +223,14 @@ def create_interaction_toolkit(page: PageController) -> ToolKit:
         auto_register=False,
     )
     async def evaluate_javascript(script: str) -> str:
-        result = await page.page.evaluate(script)
+        import re
+        cleaned = script.strip()
+        # Wrap in IIFE if the script contains bare `return` statements
+        # (common LLM mistake — page.evaluate expects an expression, not a function body)
+        has_bare_return = bool(re.search(r'(?:^|[;\n{]\s*)return\s', cleaned))
+        if has_bare_return:
+            cleaned = f"(() => {{ {cleaned} }})()"
+        result = await page.page.evaluate(cleaned)
         return f"JavaScript result: {json.dumps(result, default=str)}"
 
     @firefly_tool(

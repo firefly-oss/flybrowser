@@ -355,6 +355,10 @@ class ElementDetector:
 
             # Use vision-based detection if enabled AND model supports it
             timer.start_step("llm_generate")
+            if self.llm is None:
+                raise ElementNotFoundError(
+                    f"No LLM provider configured for element detection of '{description}'"
+                )
             llm_has_vision = getattr(self.llm, 'vision_enabled', False) or self.llm.supports_vision()
             use_vision_actual = use_vision and llm_has_vision
             if use_vision and not llm_has_vision:

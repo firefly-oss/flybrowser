@@ -526,7 +526,22 @@ class FlyBrowser:
 
         # Initialize components
         self.page_controller = PageController(self.browser_manager.page)
-        self.element_detector = ElementDetector(self.browser_manager.page, None)
+
+        # Create LLM adapter for ElementDetector (bridges BaseLLMProvider to pydantic-ai)
+        from flybrowser.llm.framework_adapter import FrameworkLLMAdapter
+        model_map = {
+            "openai": f"openai:{self._llm_model or 'gpt-4o'}",
+            "anthropic": f"anthropic:{self._llm_model or 'claude-3-5-sonnet-latest'}",
+            "gemini": f"google-gla:{self._llm_model or 'gemini-2.0-flash'}",
+            "google": f"google-gla:{self._llm_model or 'gemini-2.0-flash'}",
+            "ollama": f"ollama:{self._llm_model or 'llama3'}",
+        }
+        llm_model_str = model_map.get(
+            self._llm_provider,
+            f"{self._llm_provider}:{self._llm_model or 'gpt-4o'}",
+        )
+        llm_adapter = FrameworkLLMAdapter(llm_model_str, api_key=self._api_key)
+        self.element_detector = ElementDetector(self.browser_manager.page, llm_adapter)
 
         # Initialize recording components if enabled
         if self._recording_enabled:
