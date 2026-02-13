@@ -183,3 +183,6 @@ monitoring/
 # uv
 uv.lock
 uv/
+
+# Worktrees
+.worktrees/
