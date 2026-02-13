@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
-from .types import (
+from ..types import (
     Action,
     ExecutionOutcome,
     MemoryPriority,
@@ -1666,7 +1666,7 @@ class AgentMemory:
         Returns:
             Initialized SitemapGraph instance
         """
-        from .sitemap_graph import SitemapGraph, SitemapLimits
+        from ..sitemap_graph import SitemapGraph, SitemapLimits
         
         if limits is None:
             limits = SitemapLimits()
@@ -1744,7 +1744,7 @@ class AgentMemory:
         if not graph:
             return 0
         
-        from .sitemap_graph import LinkType
+        from ..sitemap_graph import LinkType
         try:
             lt = LinkType(link_type)
         except ValueError:
