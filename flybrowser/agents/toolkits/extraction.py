@@ -57,8 +57,21 @@ def create_extraction_toolkit(page: PageController) -> ToolKit:
     )
     async def extract_text(selector: str = "") -> str:
         if selector:
-            text = await page.page.locator(selector).text_content()
-            return f"Text content of '{selector}': {text}"
+            locator = page.page.locator(selector)
+            count = await locator.count()
+            if count == 0:
+                return f"No elements found for selector '{selector}'"
+            if count == 1:
+                text = await locator.text_content()
+                return f"Text content of '{selector}': {text}"
+            # Multiple matches — concatenate first 10 elements
+            parts = []
+            for i in range(min(count, 10)):
+                text = await locator.nth(i).text_content()
+                if text and text.strip():
+                    parts.append(text.strip())
+            suffix = f" (showing 10 of {count})" if count > 10 else ""
+            return f"Text content of '{selector}' ({count} elements{suffix}):\n" + "\n---\n".join(parts)
 
         data = await page.page.evaluate(
             """() => {
