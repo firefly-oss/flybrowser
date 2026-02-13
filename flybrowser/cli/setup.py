@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import secrets
 import shutil
 import signal
 import subprocess
@@ -1081,6 +1082,259 @@ def cmd_jupyter(args: argparse.Namespace) -> int:
         return 130
 
 
+def setup_quick() -> Dict[str, Any]:
+    """Quick 30-second setup: auto-detect LLM from environment, install chromium, verify.
+
+    Checks environment variables for known LLM API keys to auto-detect the
+    provider.  If none are found, falls back to an interactive provider
+    selection prompt.
+
+    Returns:
+        Configuration dictionary with at least a ``provider`` key.
+    """
+    print_banner()
+    print("\n[QUICK START] 30-second FlyBrowser setup\n")
+
+    config: Dict[str, Any] = {}
+
+    # --- Step 1: Auto-detect LLM provider from environment ---
+    env_providers = [
+        ("OPENAI_API_KEY", "openai"),
+        ("ANTHROPIC_API_KEY", "anthropic"),
+        ("GOOGLE_API_KEY", "gemini"),
+        ("DASHSCOPE_API_KEY", "qwen"),
+    ]
+
+    detected_provider: Optional[str] = None
+    for env_var, provider_name in env_providers:
+        if os.environ.get(env_var):
+            detected_provider = provider_name
+            print(f"[OK] Detected {provider_name} from ${env_var}")
+            break
+
+    if detected_provider:
+        config["provider"] = detected_provider
+    else:
+        # Interactive fallback
+        provider = prompt_choice(
+            "Select LLM provider:",
+            [
+                "OpenAI (GPT-5.2, GPT-4o)",
+                "Anthropic (Claude)",
+                "Google (Gemini)",
+                "Ollama (Local)",
+            ],
+            default=0,
+        )
+        provider_map = {
+            "OpenAI": "openai",
+            "Anthropic": "anthropic",
+            "Google": "gemini",
+            "Ollama": "ollama",
+        }
+        for key, val in provider_map.items():
+            if key in provider:
+                config["provider"] = val
+                break
+
+        # Prompt for API key for cloud providers
+        if config.get("provider") != "ollama":
+            config["api_key"] = prompt("API Key", required=True)
+
+    # --- Step 2: Install Chromium ---
+    print("\n[INSTALL] Installing Chromium browser...")
+    install_browsers(["chromium"])
+
+    # --- Step 3: Verify ---
+    print()
+    verify_installation()
+
+    print("\n[OK] Quick setup complete!")
+    return config
+
+
+def setup_llm() -> Dict[str, Any]:
+    """Interactive LLM provider configuration.
+
+    Walks the user through selecting a provider, entering an API key,
+    choosing a model, and optionally running a connectivity test.
+
+    Returns:
+        Configuration dictionary with ``llm_provider``, ``model``, and
+        optionally ``api_key`` / ``base_url``.
+    """
+    print("\n" + "=" * 60)
+    print("LLM PROVIDER CONFIGURATION")
+    print("=" * 60)
+
+    config: Dict[str, Any] = {}
+
+    provider = prompt_choice(
+        "Select LLM provider:",
+        [
+            "OpenAI (GPT-5.2, GPT-4o)",
+            "Anthropic (Claude)",
+            "Google (Gemini)",
+            "Qwen (Alibaba Cloud)",
+            "Ollama (Local)",
+        ],
+        default=0,
+    )
+
+    if "OpenAI" in provider:
+        config["llm_provider"] = "openai"
+        config["api_key"] = prompt("OpenAI API Key", required=True)
+        config["model"] = prompt_choice(
+            "Select model:",
+            ["gpt-5.2", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"],
+            default=0,
+        )
+    elif "Anthropic" in provider:
+        config["llm_provider"] = "anthropic"
+        config["api_key"] = prompt("Anthropic API Key", required=True)
+        config["model"] = prompt_choice(
+            "Select model:",
+            ["claude-sonnet-4-5-20250929", "claude-3-5-sonnet-20241022"],
+            default=0,
+        )
+    elif "Google" in provider:
+        config["llm_provider"] = "gemini"
+        config["api_key"] = prompt("Google AI API Key", required=True)
+        config["model"] = prompt_choice(
+            "Select model:",
+            ["gemini-2.0-flash", "gemini-1.5-pro"],
+            default=0,
+        )
+    elif "Qwen" in provider:
+        config["llm_provider"] = "qwen"
+        config["api_key"] = prompt("DashScope API Key", required=True)
+        config["model"] = prompt_choice(
+            "Select model:",
+            ["qwen-plus", "qwen-turbo", "qwen-max", "qwen-vl-max"],
+            default=0,
+        )
+    elif "Ollama" in provider:
+        config["llm_provider"] = "ollama"
+        config["base_url"] = prompt("Ollama base URL", default="http://localhost:11434")
+        config["model"] = prompt("Ollama model name", default="llama3.2")
+
+    # Optional connectivity test
+    if prompt_bool("Run connectivity test?", default=False):
+        print(f"[TEST] Testing {config['llm_provider']} connectivity...")
+        print("[INFO] Connectivity test placeholder -- not yet implemented.")
+
+    print(f"\n[OK] LLM provider configured: {config['llm_provider']}")
+    return config
+
+
+def setup_server() -> Dict[str, Any]:
+    """Configure server mode: host, port, workers, and TLS options.
+
+    Returns:
+        Configuration dictionary with ``host``, ``port``, ``workers``,
+        and optionally ``tls_enabled`` / ``tls_cert`` / ``tls_key``.
+    """
+    print("\n" + "=" * 60)
+    print("SERVER CONFIGURATION")
+    print("=" * 60)
+
+    config: Dict[str, Any] = {}
+
+    config["host"] = prompt("Host address", default="0.0.0.0")
+    config["port"] = int(prompt("Port", default="8000"))
+    config["workers"] = int(prompt("Number of workers", default="4"))
+
+    tls = prompt_bool("Enable TLS?", default=False)
+    config["tls_enabled"] = tls
+    if tls:
+        config["tls_cert"] = prompt("Path to TLS certificate", required=True)
+        config["tls_key"] = prompt("Path to TLS private key", required=True)
+
+    print(f"\n[OK] Server configured: {config['host']}:{config['port']} "
+          f"({config['workers']} workers, TLS={'on' if tls else 'off'})")
+    return config
+
+
+def setup_observability() -> Dict[str, Any]:
+    """Configure observability: OTLP endpoint, Prometheus metrics, log level.
+
+    Returns:
+        Configuration dictionary with ``otlp_endpoint``, ``log_level``,
+        and optionally ``prometheus_port``.
+    """
+    print("\n" + "=" * 60)
+    print("OBSERVABILITY CONFIGURATION")
+    print("=" * 60)
+
+    config: Dict[str, Any] = {}
+
+    config["otlp_endpoint"] = prompt("OTLP collector endpoint", default="http://localhost:4317")
+
+    metrics = prompt_bool("Enable Prometheus metrics?", default=True)
+    config["metrics_enabled"] = metrics
+    if metrics:
+        config["prometheus_port"] = int(prompt("Prometheus metrics port", default="9090"))
+
+    config["log_level"] = prompt_choice(
+        "Log level:",
+        ["DEBUG", "INFO", "WARNING", "ERROR"],
+        default=1,
+    )
+
+    print(f"\n[OK] Observability configured: OTLP={config['otlp_endpoint']}, "
+          f"log_level={config['log_level']}")
+    return config
+
+
+def setup_security() -> Dict[str, Any]:
+    """Configure security: RBAC enable/disable, admin token, JWT secret.
+
+    Returns:
+        Configuration dictionary with ``rbac_enabled`` and, when enabled,
+        ``admin_token`` and ``jwt_secret``.
+    """
+    print("\n" + "=" * 60)
+    print("SECURITY CONFIGURATION")
+    print("=" * 60)
+
+    config: Dict[str, Any] = {}
+
+    rbac = prompt_bool("Enable RBAC (role-based access control)?", default=True)
+    config["rbac_enabled"] = rbac
+
+    if rbac:
+        config["jwt_secret"] = prompt(
+            "JWT secret (leave empty to auto-generate)", default=""
+        )
+        if not config["jwt_secret"]:
+            config["jwt_secret"] = secrets.token_urlsafe(32)
+            print(f"[OK] Generated JWT secret: {config['jwt_secret'][:8]}...")
+
+        config["admin_token"] = secrets.token_urlsafe(32)
+        print(f"[OK] Generated admin token: {config['admin_token'][:8]}...")
+        print("[IMPORTANT] Save the admin token securely -- it will not be shown again.")
+
+    print(f"\n[OK] Security configured: RBAC={'enabled' if rbac else 'disabled'}")
+    return config
+
+
+def cmd_quick(args: argparse.Namespace) -> int:
+    """Handle the ``quick`` subcommand.
+
+    Args:
+        args: Parsed command line arguments.
+
+    Returns:
+        Exit code (0 for success, non-zero for failure).
+    """
+    try:
+        setup_quick()
+        return 0
+    except KeyboardInterrupt:
+        print("\n\n[INTERRUPTED] Quick setup cancelled by user.")
+        return 130
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser.
 
@@ -1170,6 +1424,13 @@ def create_parser() -> argparse.ArgumentParser:
         help="Jupyter action to perform",
     )
     jupyter_parser.set_defaults(func=cmd_jupyter)
+
+    # Quick setup command
+    quick_parser = subparsers.add_parser(
+        "quick",
+        help="30-second quick start (pick LLM, install browser, done)",
+    )
+    quick_parser.set_defaults(func=cmd_quick)
 
     return parser
 
