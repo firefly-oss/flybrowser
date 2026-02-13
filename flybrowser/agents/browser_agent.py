@@ -21,6 +21,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Optional, Type
 
 from fireflyframework_genai.agents import FireflyAgent
+from fireflyframework_genai.agents.builtin_middleware import (
+    CostGuardMiddleware,
+    ExplainabilityMiddleware,
+    LoggingMiddleware,
+)
 from fireflyframework_genai.reasoning import ReActPattern
 
 from flybrowser.agents.toolkits import create_all_toolkits
@@ -78,6 +83,9 @@ class BrowserAgent:
         )
         self._memory = BrowserMemoryManager()
         self._middleware = [
+            LoggingMiddleware(),
+            CostGuardMiddleware(budget_usd=config.budget_limit_usd),
+            ExplainabilityMiddleware(),
             ObstacleDetectionMiddleware(page_controller),
             ScreenshotOnErrorMiddleware(page_controller),
         ]

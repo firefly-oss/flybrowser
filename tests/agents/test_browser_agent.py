@@ -66,7 +66,7 @@ class TestBrowserAgentCreation:
         agent = BrowserAgent(
             page_controller=mock_page_controller, config=BrowserAgentConfig()
         )
-        assert len(agent._middleware) == 2
+        assert len(agent._middleware) == 5
 
     def test_has_methods(self, mock_page_controller):
         agent = BrowserAgent(
