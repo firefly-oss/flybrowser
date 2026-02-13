@@ -13,111 +13,18 @@
 # limitations under the License.
 
 """
-Tools module for the ReAct agentic framework.
+Tools module for the FlyBrowser agentic framework.
 
-This module provides the tool system architecture including:
-- BaseTool: Abstract base class for all tools
-- ToolRegistry: Registry for tool management
-- ToolMetadata: Tool metadata and JSON schema generation
-- ToolParameter: Parameter definition for validation
+Old tool implementations (navigation, interaction, extraction, system, etc.)
+have been removed in favor of fireflyframework-genai ToolKits.
 
-Browser-specific tools:
-- navigation: NavigateTool, GoBackTool, GoForwardTool, RefreshTool
-- interaction: ClickTool, TypeTool, ScrollTool, HoverTool
-- extraction: ExtractTextTool, ScreenshotTool, GetPageStateTool
-- system: CompleteTool, FailTool, WaitTool, AskUserTool
+Remaining modules:
+- search_utils: Search result types (SearchResult, SearchResponse, etc.)
+- search_human: Human-readable search tools (has transitive deps, import directly)
+- base: BaseTool abstract class (has transitive deps, import directly)
+- search/: Search abstraction layer (has transitive deps, import directly)
 """
 
-from flybrowser.agents.tools.base import (
-    BaseTool,
-    ToolMetadata,
-    ToolParameter,
-)
-from flybrowser.agents.tools.registry import ToolRegistry
-
-# Navigation tools
-from flybrowser.agents.tools.navigation import (
-    NavigateTool,
-    GoBackTool,
-    GoForwardTool,
-    RefreshTool,
-)
-
-# Interaction tools
-from flybrowser.agents.tools.interaction import (
-    ClickTool,
-    TypeTool,
-    ScrollTool,
-    HoverTool,
-    PressKeyTool,
-    SelectOptionTool,
-    CheckboxTool,
-    FocusTool,
-    FillTool,
-    WaitForSelectorTool,
-    DoubleClickTool,
-    RightClickTool,
-    DragAndDropTool,
-    UploadFileTool,
-    EvaluateJavaScriptTool,
-    GetAttributeTool,
-    ClearInputTool,
-)
-
-# Extraction tools
-from flybrowser.agents.tools.extraction import (
-    ExtractTextTool,
-    ScreenshotTool,
-    GetPageStateTool,
-)
-
-# System tools
-from flybrowser.agents.tools.system import (
-    CompleteTool,
-    FailTool,
-    WaitTool,
-    AskUserTool,
-)
-
-# Legacy search tools
-from flybrowser.agents.tools.search_api import SearchAPITool
-from flybrowser.agents.tools.search_human import SearchHumanTool, SearchHumanAdvancedTool
-from flybrowser.agents.tools.search_rank import SearchRankTool
-
-# New search abstraction layer
-from flybrowser.agents.tools.search import (
-    # Types
-    SearchOptions,
-    SearchType,
-    ProviderHealth,
-    ProviderStatus,
-    RankedSearchResult,
-    SearchAgentResponse,
-    ProviderCapabilities,
-    # Providers
-    BaseSearchProvider,
-    ProviderRegistry,
-    SerperProvider,
-    GoogleSearchProvider,
-    BingSearchProvider,
-    # Rankers
-    BaseRanker,
-    BM25Ranker,
-    FreshnessRanker,
-    DomainAuthorityRanker,
-    CompositeRanker,
-    # Agent
-    SearchAgent,
-    # Tool integration
-    SearchAgentTool,
-    # Intent detection
-    SearchIntent,
-    SearchIntentDetector,
-    detect_search_intent,
-)
-
-# Page exploration tools
-from flybrowser.agents.tools.page_explorer import PageExplorerTool
 from flybrowser.agents.tools.search_utils import (
     SearchResult,
     SearchResponse,
@@ -126,76 +33,8 @@ from flybrowser.agents.tools.search_utils import (
 )
 
 __all__ = [
-    # Base classes
-    "BaseTool",
-    "ToolMetadata",
-    "ToolParameter",
-    # Registry
-    "ToolRegistry",
-    # Navigation tools
-    "NavigateTool",
-    "GoBackTool",
-    "GoForwardTool",
-    "RefreshTool",
-    # Interaction tools
-    "ClickTool",
-    "TypeTool",
-    "ScrollTool",
-    "HoverTool",
-    "PressKeyTool",
-    "SelectOptionTool",
-    "CheckboxTool",
-    "FocusTool",
-    "FillTool",
-    "WaitForSelectorTool",
-    "DoubleClickTool",
-    "RightClickTool",
-    "DragAndDropTool",
-    "UploadFileTool",
-    "EvaluateJavaScriptTool",
-    "GetAttributeTool",
-    "ClearInputTool",
-    # Extraction tools
-    "ExtractTextTool",
-    "ScreenshotTool",
-    "GetPageStateTool",
-    # System tools
-    "CompleteTool",
-    "FailTool",
-    "WaitTool",
-    "AskUserTool",
-    # Legacy search tools
-    "SearchAPITool",
-    "SearchHumanTool",
-    "SearchHumanAdvancedTool",
-    "SearchRankTool",
     "SearchResult",
     "SearchResponse",
     "SearchEngine",
     "SearchProvider",
-    # New search abstraction layer
-    "SearchOptions",
-    "SearchType",
-    "ProviderHealth",
-    "ProviderStatus",
-    "RankedSearchResult",
-    "SearchAgentResponse",
-    "ProviderCapabilities",
-    "BaseSearchProvider",
-    "ProviderRegistry",
-    "SerperProvider",
-    "GoogleSearchProvider",
-    "BingSearchProvider",
-    "BaseRanker",
-    "BM25Ranker",
-    "FreshnessRanker",
-    "DomainAuthorityRanker",
-    "CompositeRanker",
-    "SearchAgent",
-    "SearchAgentTool",
-    "SearchIntent",
-    "SearchIntentDetector",
-    "detect_search_intent",
-    # Page exploration tools
-    "PageExplorerTool",
 ]
