@@ -40,6 +40,12 @@ class ObstacleInfo:
     resolution: str
 
 
+_RESERVED_KEYS = frozenset({
+    "page_history", "visited_urls", "current_page",
+    "navigation_graph", "obstacle_cache",
+})
+
+
 class BrowserMemoryManager:
     """Browser-specific memory manager backed by the framework MemoryManager.
 
@@ -122,6 +128,11 @@ class BrowserMemoryManager:
         return self._page_history[-1] if self._page_history else None
 
     def set_fact(self, key: str, value: Any) -> None:
+        if key in _RESERVED_KEYS:
+            raise ValueError(
+                f"Key {key!r} is reserved for internal browser state. "
+                f"Reserved keys: {', '.join(sorted(_RESERVED_KEYS))}"
+            )
         self._facts[key] = value
         self._sync_to_framework(key, value)
 
@@ -142,10 +153,16 @@ class BrowserMemoryManager:
         if self._obstacle_cache:
             parts.append(f"Known obstacles: {', '.join(self._obstacle_cache.keys())}")
 
-        # Append framework working memory context
-        wm_context = self._framework_memory.get_working_context()
-        if wm_context:
-            parts.append(wm_context)
+        # Append user-set facts from working memory (skip browser-managed keys)
+        user_facts = {
+            k: v for k, v in self._facts.items()
+            if k not in _RESERVED_KEYS and k != "current_page"
+        }
+        if user_facts:
+            lines = ["Additional facts:"]
+            for key, value in user_facts.items():
+                lines.append(f"- {key}: {value}")
+            parts.append("\n".join(lines))
 
         return "\n".join(parts) if parts else "No browser memory recorded yet."
 

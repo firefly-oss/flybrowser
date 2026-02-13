@@ -19,7 +19,7 @@ fireflyframework-genai's MemoryManager for storage while maintaining
 full backward compatibility with the original API.
 """
 import pytest
-from flybrowser.agents.memory.browser_memory import BrowserMemoryManager, PageSnapshot
+from flybrowser.agents.memory.browser_memory import BrowserMemoryManager, PageSnapshot, _RESERVED_KEYS
 
 
 class TestBrowserMemoryFrameworkIntegration:
@@ -67,13 +67,37 @@ class TestBrowserMemoryFrameworkIntegration:
         assert stored["https://example.com"]["resolution"] == "clicked accept"
 
     def test_format_for_prompt_includes_memory_context(self):
-        """format_for_prompt should include working memory context."""
+        """format_for_prompt should include page context and user facts."""
+        mgr = BrowserMemoryManager()
+        mgr.record_page_state("https://example.com", "Example", "3 buttons")
+        mgr.set_fact("extraction_target", "prices")
+        prompt = mgr.format_for_prompt()
+        assert "Current page: https://example.com - Example" in prompt
+        assert "Additional facts:" in prompt
+        assert "extraction_target: prices" in prompt
+
+    def test_format_for_prompt_no_duplicate_browser_keys(self):
+        """format_for_prompt should not include browser-managed keys in the facts section."""
         mgr = BrowserMemoryManager()
         mgr.record_page_state("https://example.com", "Example", "3 buttons")
         prompt = mgr.format_for_prompt()
-        assert "Current page: https://example.com - Example" in prompt
-        # The working memory context section should be present
-        assert "Working Memory:" in prompt
+        # Should NOT have an Additional facts section with browser keys
+        if "Additional facts:" in prompt:
+            assert "page_history" not in prompt.split("Additional facts:")[1]
+
+    def test_set_fact_rejects_reserved_keys(self):
+        """set_fact should raise ValueError for reserved browser keys."""
+        mgr = BrowserMemoryManager()
+        for key in _RESERVED_KEYS:
+            with pytest.raises(ValueError, match="reserved"):
+                mgr.set_fact(key, "anything")
+
+    def test_set_fact_syncs_to_framework(self):
+        """set_fact should persist to both local dict and framework."""
+        mgr = BrowserMemoryManager()
+        mgr.set_fact("extraction_target", "price")
+        assert mgr.get_fact("extraction_target") == "price"
+        assert mgr._framework_memory.get_fact("extraction_target") == "price"
 
     def test_clear_resets_framework_memory(self):
         """clear() should reset the framework's working memory."""
