@@ -26,10 +26,16 @@ from fireflyframework_genai.agents.builtin_middleware import (
     ExplainabilityMiddleware,
     LoggingMiddleware,
 )
-from fireflyframework_genai.reasoning import ReActPattern
+from fireflyframework_genai.reasoning import (
+    PlanAndExecutePattern,
+    ReActPattern,
+    ReflexionPattern,
+)
+from fireflyframework_genai.reasoning.base import AbstractReasoningPattern
 from fireflyframework_genai.validation import OutputReviewer
 
 from flybrowser.agents.toolkits import create_all_toolkits
+from flybrowser.agents.types import ReasoningStrategy
 from flybrowser.agents.memory.browser_memory import BrowserMemoryManager
 from flybrowser.agents.middleware.obstacle import ObstacleDetectionMiddleware
 from flybrowser.agents.middleware.screenshot import ScreenshotOnErrorMiddleware
@@ -45,6 +51,7 @@ class BrowserAgentConfig:
     max_time: int = 1800
     budget_limit_usd: float = 5.0
     session_id: Optional[str] = None
+    reasoning_strategy: ReasoningStrategy = ReasoningStrategy.REACT_STANDARD
 
 
 _SYSTEM_INSTRUCTIONS = """You are a browser automation agent. You control a real web browser via tools.
@@ -97,7 +104,19 @@ class BrowserAgent:
             tools=self._toolkits,
             middleware=self._middleware,
         )
-        self._react = ReActPattern(max_steps=config.max_iterations)
+        self._reasoning_strategy = config.reasoning_strategy
+        self._react = self._create_reasoning_pattern(config)
+
+    @staticmethod
+    def _create_reasoning_pattern(config: BrowserAgentConfig) -> AbstractReasoningPattern:
+        """Select and instantiate a reasoning pattern based on the configured strategy."""
+        strategy = config.reasoning_strategy
+        if strategy == ReasoningStrategy.PLAN_AND_SOLVE:
+            return PlanAndExecutePattern(max_steps=config.max_iterations)
+        if strategy == ReasoningStrategy.SELF_REFLECTION:
+            return ReflexionPattern(max_steps=config.max_iterations)
+        # REACT_STANDARD and any other strategy default to ReAct
+        return ReActPattern(max_steps=config.max_iterations)
 
     @property
     def memory(self) -> BrowserMemoryManager:
