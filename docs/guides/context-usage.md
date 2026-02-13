@@ -264,7 +264,7 @@ await browser.agent(
 ```python
 context = ContextBuilder()\
     .with_filters({
-        "date_after": "2024-01-01",
+        "date_after": "2026-02-13",
         "source_type": "academic"
     })\
     .with_preferences({

@@ -1,192 +1,209 @@
 # FlyBrowser Documentation
 
-FlyBrowser is a browser automation and web scraping framework built on top of [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai) that uses Large Language Models to enable natural language control of web browsers. Instead of writing complex selectors and handling the intricacies of web page interaction manually, you describe what you want in plain English and FlyBrowser figures out how to accomplish it.
+**LLM-powered browser automation that speaks your language.**
 
-## What Makes FlyBrowser Different
+FlyBrowser combines [Playwright](https://playwright.dev/) browser control with LLM intelligence, letting you automate the web using plain English. Built on [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai) -- Firefly's open-source agent framework -- it inherits production-grade ReAct reasoning, multi-provider LLM support, and a composable toolkit system.
 
-Traditional browser automation requires you to know the exact structure of web pages: CSS selectors, XPath expressions, waiting for specific elements, handling dynamic content, and dealing with the countless edge cases that make web automation brittle. FlyBrowser takes a fundamentally different approach.
-
-When you tell FlyBrowser to "click the login button", it uses an LLM to understand the page structure, identify the relevant element, and perform the action. When you ask it to "extract all product prices from this page", it reasons about the page layout and returns structured data. This natural language interface means your automation scripts are more readable, more maintainable, and more resilient to website changes.
-
-## Core Capabilities
-
-FlyBrowser provides several primary methods for browser automation:
-
-**Navigation and Actions**
-
-- `goto(url)` - Navigate directly to a URL
-- `navigate(instruction)` - Navigate using natural language ("go to the login page")
-- `act(instruction)` - Perform actions ("click the submit button", "type hello in the search box")
-
-**Data Extraction**
-
-- `extract(query, schema)` - Extract data from pages using natural language queries with optional JSON Schema validation
-- `observe(query)` - Find and analyze elements on the page
-
-**Autonomous Operations**
-
-- `agent(task, context)` - Execute complex multi-step tasks autonomously
-- `execute_task(task)` - Run tasks with full ReAct reasoning
-
-**Recording and Streaming**
-
-- `screenshot()` - Capture page screenshots
-- `start_recording()` / `stop_recording()` - Record browser sessions
-- `start_stream()` / `stop_stream()` - Live stream browser sessions via HLS, DASH, or RTMP
-
-## Deployment Modes
-
-FlyBrowser runs in three modes, all using the same API:
-
-**Embedded Mode** - The browser runs directly in your Python process. Ideal for scripts, notebooks, and development.
+- **Version**: 26.02.01 (CalVer)
+- **Python**: >= 3.13
+- **License**: Apache 2.0
+- **Author**: Firefly Software Solutions Inc
 
 ```python
-async with FlyBrowser(llm_provider="openai", api_key="sk-...") as browser:
-    await browser.goto("https://example.com")
-    data = await browser.extract("Get the main heading")
-```
-
-**Standalone Server Mode** - FlyBrowser runs as an HTTP server, allowing multiple clients to create and manage browser sessions.
-
-```python
-async with FlyBrowser(endpoint="http://localhost:8000") as browser:
-    await browser.goto("https://example.com")
-    data = await browser.extract("Get the main heading")
-```
-
-**Cluster Mode** - Multiple FlyBrowser nodes coordinate via Raft consensus for high availability, automatic failover, and load balancing.
-
-The same code works in all three modes. The only difference is how you initialize the FlyBrowser instance.
-
-## Supported LLM Providers
-
-LLM orchestration is handled by [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai). FlyBrowser works with multiple providers:
-
-- **OpenAI** — GPT-5.2, GPT-5-mini, GPT-4o, GPT-4o-mini
-- **Anthropic** — Claude 4.5 Sonnet, Claude 3.5 Sonnet
-- **Google** — Gemini 2.0 Flash, Gemini 1.5 Pro
-- **Qwen** — Qwen3, Qwen-Plus, Qwen-VL
-- **Ollama** — Local models like Qwen3, Llama 3.2, Gemma 3
-
-Vision-capable models enable FlyBrowser to analyze screenshots for better understanding of complex page layouts.
-
-## Documentation Sections
-
-### Getting Started
-
-- [Installation](getting-started/installation.md) - System requirements and installation methods
-- [Quickstart](getting-started/quickstart.md) - Your first automation in five minutes
-- [Core Concepts](getting-started/concepts.md) - Understanding sessions, actions, and the ReAct framework
-
-### User Guides
-
-- [Basic Automation](guides/basic-automation.md) - Navigation, clicking, typing, and scrolling
-- [Data Extraction](guides/data-extraction.md) - Extracting structured data from web pages
-- [Form Automation](guides/form-automation.md) - Filling and submitting forms
-- [Multi-Page Workflows](guides/multi-page-workflows.md) - Complex tasks spanning multiple pages
-- [Authentication](guides/authentication.md) - Handling login flows securely
-- [Error Handling](guides/error-handling.md) - Dealing with failures and retries
-
-### Features
-
-- [Act](features/act.md) - The act() method in depth
-- [Extract](features/extract.md) - The extract() method in depth
-- [Agent](features/agent.md) - The agent() method for complex tasks
-- [Observe](features/observe.md) - The observe() method
-- [Navigation](features/navigation.md) - URL and natural language navigation
-- [Screenshots](features/screenshots.md) - Capturing browser sessions
-- [Streaming](features/streaming.md) - HLS, DASH, and RTMP streaming
-- [PII Handling](features/pii.md) - Secure credential handling
-- [Search](features/search.md) - Multi-provider web search with intelligent ranking
-- [Stealth Mode](features/stealth.md) - Fingerprint generation, CAPTCHA solving, and proxy network
-- [Obstacle Detection](features/obstacle-detection.md) - Automatic popup/modal dismissal
-- [Observability](features/observability.md) - Command logging, source capture, live view, and completion page
-
-### Architecture
-
-- [System Overview](architecture/overview.md) - High-level architecture
-- [ReAct Framework](architecture/react.md) - The reasoning and acting loop
-- [Tools System](architecture/tools.md) - ToolKit architecture
-- [Memory System](architecture/memory.md) - BrowserMemoryManager details
-- [LLM Integration](architecture/llm-integration.md) - fireflyframework-genai provider delegation
-- [Response Validation](architecture/validation.md) - Ensuring quality outputs
-- [Context System](architecture/context.md) - Context building and management
-
-### Deployment
-
-- [Embedded Mode](deployment/embedded.md) - Running in scripts and notebooks
-- [Standalone Server](deployment/standalone.md) - Single server deployment
-- [Cluster Mode](deployment/cluster.md) - Distributed high-availability deployment
-- [Docker](deployment/docker.md) - Container deployment
-- [Kubernetes](deployment/kubernetes.md) - Orchestrated deployment
-
-### Reference
-
-- [SDK Reference](reference/sdk.md) - Complete Python API documentation
-- [REST API Reference](reference/rest-api.md) - HTTP endpoint documentation
-- [CLI Reference](reference/cli.md) - Command-line tools
-- [Configuration](reference/configuration.md) - All configuration options
-
-### Advanced Topics
-
-- [Custom Tools](advanced/custom-tools.md) - Creating your own browser tools
-- [Custom Providers](advanced/custom-providers.md) - Adding LLM provider support
-- [Performance](advanced/performance.md) - Optimization strategies
-- [Troubleshooting](advanced/troubleshooting.md) - Common issues and solutions
-
-### Examples
-
-- [Examples Overview](examples/index.md) - Guide to example code
-- [Web Scraping](examples/web-scraping.md) - Scraping examples
-- [UI Testing](examples/ui-testing.md) - Testing examples
-- [Workflow Automation](examples/workflow-automation.md) - End-to-end automation examples
-
-## Quick Example
-
-Here is a complete example that navigates to a website, performs some actions, and extracts data:
-
-```python
-import asyncio
 from flybrowser import FlyBrowser
 
-async def main():
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key="sk-...",
-        headless=True,
-    ) as browser:
-        # Navigate to the page
-        await browser.goto("https://news.ycombinator.com")
-        
-        # Extract structured data
-        result = await browser.extract(
-            "Get the titles and scores of the top 5 stories",
-            schema={
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "score": {"type": "integer"}
-                    }
-                }
-            }
-        )
-        
-        if result.success:
-            for story in result.data:
-                print(f"{story['title']} - {story['score']} points")
-        
-        # Show execution statistics
-        result.pprint()
-
-asyncio.run(main())
+async with FlyBrowser(llm_provider="openai", api_key="sk-...") as browser:
+    await browser.goto("https://news.ycombinator.com")
+    stories = await browser.extract("Get the top 5 post titles and scores")
+    await browser.agent("Click into the top story and summarize the comments")
 ```
 
-## Version
+---
 
-This documentation covers FlyBrowser version 26.02.01 (CalVer). Requires Python 3.13+.
+## Getting Started
+
+New to FlyBrowser? Start here.
+
+| Guide | Description |
+|-------|-------------|
+| [Installation](getting-started/installation.md) | System requirements, installation methods, and Playwright setup |
+| [Quickstart](getting-started/quickstart.md) | Your first automation in five minutes |
+| [Core Concepts](getting-started/concepts.md) | Sessions, the ReAct loop, actions vs. agents, and result objects |
+| [Setup Wizard](getting-started/setup-wizard.md) | Interactive `flybrowser setup` configuration guide |
+
+---
+
+## Features
+
+Detailed documentation for every FlyBrowser capability.
+
+| Feature | Description |
+|---------|-------------|
+| [Act](features/act.md) | Execute browser actions via natural language -- click, type, scroll, select, hover |
+| [Extract](features/extract.md) | Extract structured data from pages with optional JSON Schema validation |
+| [Agent](features/agent.md) | Autonomous multi-step task execution with configurable iteration and time limits |
+| [Observe](features/observe.md) | Find and analyze page elements, returning selectors for programmatic use |
+| [Navigation](features/navigation.md) | Direct URL navigation and natural language link-following |
+| [Search](features/search.md) | Multi-provider web search (Serper, Google, Bing) with intelligent ranking and browser fallback |
+| [Obstacle Detection](features/obstacle-detection.md) | Automatic dismissal of popups, modals, cookie banners, and newsletter overlays |
+| [Screenshots](features/screenshots.md) | Page capture with optional PII masking and full-page mode |
+| [Streaming](features/streaming.md) | Live browser streaming via HLS, DASH, or RTMP with H.264/H.265/VP9 codecs |
+| [PII Handling](features/pii.md) | Encrypted credential storage, placeholder-based LLM injection, and auto-masking |
+| [Stealth Mode](features/stealth.md) | Fingerprint generation, CAPTCHA solving, proxy rotation, and human-like behavior |
+| [Observability](features/observability.md) | Command logging, live view iframe, completion page, OpenTelemetry tracing, Prometheus metrics |
+
+---
+
+## User Guides
+
+Step-by-step guides for common workflows.
+
+| Guide | Description |
+|-------|-------------|
+| [Basic Automation](guides/basic-automation.md) | Navigation, clicking, typing, and scrolling patterns |
+| [Data Extraction](guides/data-extraction.md) | Scraping techniques, schema validation, and pagination |
+| [Form Automation](guides/form-automation.md) | Filling and submitting forms, including multi-step wizards |
+| [Multi-Page Workflows](guides/multi-page-workflows.md) | Complex tasks that span multiple pages |
+| [Authentication](guides/authentication.md) | Login flows, session persistence, and secure credential handling |
+| [Error Handling](guides/error-handling.md) | Retry strategies, recovery patterns, and debugging |
+| [Context Usage](guides/context-usage.md) | Passing structured context to operations for better results |
+
+---
+
+## CLI Reference
+
+FlyBrowser includes a full command-line interface for interactive use, scripting, and server management.
+
+| Reference | Description |
+|-----------|-------------|
+| [CLI Reference](reference/cli.md) | Complete command-line reference |
+| [Direct Commands](cli/direct-commands.md) | `goto`, `act`, `extract`, `agent`, `screenshot`, and `run` |
+| [Session Management](cli/session-management.md) | `session create`, `list`, `info`, `connect`, `exec`, `close`, `close-all` |
+| [Pipelines](cli/pipelines.md) | YAML workflow pipelines with `flybrowser run` |
+
+**Quick reference:**
+
+```
+flybrowser repl                             Interactive REPL
+flybrowser goto <url>                       Navigate to URL
+flybrowser act <instruction>                Perform action
+flybrowser extract <query>                  Extract data
+flybrowser agent <task>                     Autonomous agent
+flybrowser screenshot                       Capture screenshot
+flybrowser run <workflow.yaml>              Execute YAML pipeline
+flybrowser serve                            Start REST API server
+flybrowser setup [quick|llm|server|...]     Guided configuration
+flybrowser doctor                           Check installation health
+```
+
+---
+
+## API Reference
+
+| Reference | Description |
+|-----------|-------------|
+| [SDK Reference](reference/sdk.md) | Complete Python API -- `FlyBrowser` class, all methods, parameters, and return types |
+| [REST API Reference](reference/rest-api.md) | HTTP endpoints for standalone and cluster modes |
+| [Configuration](reference/configuration.md) | All constructor options, environment variables, and storage configuration |
+
+---
+
+## Architecture
+
+How FlyBrowser works under the hood.
+
+| Topic | Description |
+|-------|-------------|
+| [System Overview](architecture/overview.md) | High-level architecture diagram and component relationships |
+| [Framework Integration](architecture/framework-integration.md) | How FlyBrowser builds on fireflyframework-genai |
+| [ReAct Framework](architecture/react.md) | The Thought-Action-Observation reasoning loop |
+| [Tools System](architecture/tools.md) | 6 ToolKits with 32 browser tools, `@firefly_tool` decorator |
+| [Memory System](architecture/memory.md) | BrowserMemoryManager, dual-write sync, page history, navigation graphs |
+| [LLM Integration](architecture/llm-integration.md) | Provider delegation, model selection, and API call management |
+| [Response Validation](architecture/validation.md) | OutputReviewer and the 5-stage validation pipeline |
+| [Context System](architecture/context.md) | Context building, prompt construction, and state management |
+| [Security](architecture/security.md) | RBAC roles, JWT authentication, PII encryption, memory zeroing |
+
+---
+
+## Deployment
+
+Run FlyBrowser however your infrastructure requires. The Python SDK API is identical across all modes.
+
+| Mode | Description |
+|------|-------------|
+| [Embedded](deployment/embedded.md) | In-process -- scripts, notebooks, development |
+| [Standalone Server](deployment/standalone.md) | FastAPI HTTP server for multi-client access |
+| [Cluster](deployment/cluster.md) | Multi-node with Raft consensus, auto-failover, and load balancing |
+| [Docker](deployment/docker.md) | Container images and Docker Compose configurations |
+| [Kubernetes](deployment/kubernetes.md) | Helm charts and K8s deployment patterns |
+
+---
+
+## LLM Providers
+
+LLM orchestration is handled by [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai). FlyBrowser works with:
+
+| Provider | Models | Vision |
+|----------|--------|--------|
+| **OpenAI** | gpt-5.2, gpt-5-mini, gpt-4o, gpt-4o-mini | Yes |
+| **Anthropic** | claude-sonnet-4-5-20250929, claude-3-5-sonnet-20241022 | Yes |
+| **Google Gemini** | gemini-2.0-flash, gemini-1.5-pro | Yes |
+| **Qwen (Alibaba)** | qwen3, qwen-plus, qwen-vl | Yes (qwen-vl) |
+| **Ollama (local)** | qwen3, llama3.2, gemma3, etc. | Model-dependent |
+| **Custom** | Any OpenAI-compatible endpoint | Varies |
+
+See the [LLM Integration](architecture/llm-integration.md) page for configuration details.
+
+---
+
+## Advanced Topics
+
+| Topic | Description |
+|-------|-------------|
+| [Custom Tools](advanced/custom-tools.md) | Create your own browser tools using the `@firefly_tool` decorator and `ToolKit` base class |
+| [Custom Providers](advanced/custom-providers.md) | Add support for additional LLM providers |
+| [Performance](advanced/performance.md) | Speed presets, hardware acceleration, parallel execution, and caching |
+| [Troubleshooting](advanced/troubleshooting.md) | Common issues, diagnostics with `flybrowser doctor`, and debug logging |
+
+---
+
+## Examples
+
+| Category | Description |
+|----------|-------------|
+| [Examples Overview](examples/index.md) | Guide to all example code with descriptions |
+| [Web Scraping](examples/web-scraping.md) | Structured data extraction from real websites |
+| [UI Testing](examples/ui-testing.md) | Automated testing with natural language assertions |
+| [Workflow Automation](examples/workflow-automation.md) | End-to-end business workflows: forms, bookings, research |
+
+---
+
+## Core SDK Methods
+
+A quick reference for the primary `FlyBrowser` methods. See the [SDK Reference](reference/sdk.md) for full documentation.
+
+| Method | Description |
+|--------|-------------|
+| `goto(url, wait_until)` | Navigate to a URL |
+| `navigate(instruction, context, use_vision)` | Navigate via natural language |
+| `act(instruction, context, use_vision, return_metadata, max_iterations)` | Perform browser actions |
+| `extract(query, context, use_vision, schema, return_metadata, max_iterations)` | Extract structured data |
+| `observe(query, context, return_selectors, return_metadata, max_iterations)` | Find page elements |
+| `agent(task, context, max_iterations, max_time_seconds, return_metadata)` | Autonomous multi-step execution |
+| `execute_task(task)` | Single task with ReAct reasoning |
+| `search(query, search_type, max_results, ranking, return_metadata)` | Web search |
+| `batch_execute(tasks, parallel, stop_on_failure)` | Run multiple tasks |
+| `screenshot(full_page, mask_pii)` | Capture page screenshot |
+| `start_stream(protocol, quality, ...)` | Start live stream |
+| `start_recording()` / `stop_recording()` | Record session |
+| `store_credential(name, value, pii_type)` | Store encrypted credential |
+| `secure_fill(selector, credential_id, clear_first)` | Fill field without LLM exposure |
+| `mask_pii(text)` | Mask PII patterns in text |
+| `get_usage_summary()` | Token counts, cost, and API stats |
+
+---
 
 ## License
 
-FlyBrowser is licensed under the Apache License 2.0. See the LICENSE file for details.
+Copyright 2026 Firefly Software Solutions Inc. Licensed under the [Apache License 2.0](https://opensource.org/licenses/Apache-2.0).

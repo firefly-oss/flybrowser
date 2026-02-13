@@ -119,14 +119,14 @@ Date pickers vary widely in implementation:
 
 ```python
 # Simple date inputs
-await browser.act("enter '2024-03-15' in the date field")
+await browser.act("enter '2026-02-13' in the date field")
 
 # Calendar pickers - open first
 await browser.act("click the date picker")
-await browser.act("select March 15, 2024 from the calendar")
+await browser.act("select February 13, 2026 from the calendar")
 
 # Complex date pickers
-await browser.act("set the check-in date to March 15, 2024")
+await browser.act("set the check-in date to February 13, 2026")
 ```
 
 ### File Uploads
