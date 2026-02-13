@@ -1048,44 +1048,13 @@ class AgentMemory:
         
         sorted_extraction_keys = sorted(extraction_keys, key=get_timestamp, reverse=True)
         
-        # For the most recent extraction, prefer RAW data (agent needs full context)
-        # For older extractions, prefer COMPRESSED to save tokens
-        most_recent_key = sorted_extraction_keys[0] if sorted_extraction_keys else None
-        
         for key in sorted_extraction_keys:
             value = self.working._scratch_pad.get(key)
-            compressed_key = f"{key}_compressed"
-            compressed_value = self.working._scratch_pad.get(compressed_key)
-            
+
             # Determine if this extraction contains URL-critical data
             # Key format: extracted_toolname_timestamp
             tool_name = key.replace("extracted_", "").rsplit("_", 1)[0]
             is_url_critical = tool_name in URL_CRITICAL_TOOLS
-            
-            # Decision logic:
-            # - Most recent: prefer raw (agent needs full context for current reasoning)
-            # - URL-critical: ALWAYS use raw with smart URL extraction (never lose URLs)
-            # - Older non-critical: prefer compressed (save tokens but retain key facts)
-            is_most_recent = (key == most_recent_key)
-            use_compressed = (
-                compressed_value and 
-                isinstance(compressed_value, dict) and 
-                not is_most_recent and
-                not is_url_critical  # NEVER use compressed for URL-critical data
-            )
-            
-            if use_compressed:
-                # Use the compressed summary for older non-critical extractions
-                try:
-                    from flybrowser.llm.context_compressor import CompressedContent
-                    compressed = CompressedContent.from_dict(compressed_value)
-                    value_str = compressed.format_for_prompt()
-                    extraction_lines.append(f"### {key} (compressed)")
-                    extraction_lines.append(value_str)
-                    total_extraction_chars += len(f"### {key} (compressed)\n") + len(value_str)
-                    continue
-                except Exception:
-                    pass  # Fall back to raw data
             
             # For URL-critical data, use smart formatting that preserves URLs
             if is_url_critical and isinstance(value, dict):

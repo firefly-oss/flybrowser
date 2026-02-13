@@ -49,7 +49,6 @@ from .search_utils import (
     is_valid_url,
 )
 from .navigation import NavigateTool
-from flybrowser.prompts import PromptManager
 
 if TYPE_CHECKING:
     from flybrowser.core.page import PageController
@@ -160,7 +159,6 @@ class SearchHumanTool(BaseTool):
         """Initialize the human-like search tool."""
         super().__init__(page_controller)
         self.behavior = HumanBehaviorSimulator()
-        self.prompt_manager = PromptManager()
         self._navigate_tool: Optional[NavigateTool] = None
     
     @property

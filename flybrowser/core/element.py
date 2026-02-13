@@ -40,7 +40,6 @@ from playwright.async_api import Page
 
 from flybrowser.exceptions import ElementNotFoundError
 from flybrowser.llm.base import BaseLLMProvider
-from flybrowser.prompts import PromptManager
 from flybrowser.utils.logger import logger
 from flybrowser.utils.timing import StepTimer
 from flybrowser.agents.structured_llm import StructuredLLMWrapper
@@ -268,7 +267,6 @@ class ElementDetector:
         """
         self.page = page
         self.llm = llm_provider
-        self.prompt_manager = PromptManager()
     
     async def _human_delay(self, min_ms: int = None, max_ms: int = None) -> None:
         """
@@ -362,9 +360,8 @@ class ElementDetector:
             if use_vision and not llm_has_vision:
                 logger.debug(f"Vision requested but model {self.llm.model} doesn't support it, using text-only")
             
-            # Get prompts from template manager
-            prompts = self.prompt_manager.get_prompt(
-                "element_detection",
+            # Build element detection prompts inline
+            prompts = self._build_element_detection_prompts(
                 description=description,
                 url=url,
                 title=title,
@@ -432,6 +429,111 @@ class ElementDetector:
             logger.error(f"Element detection failed: {e}")
             raise ElementNotFoundError(f"Failed to find element '{description}': {e}") from e
     
+    def _build_element_detection_prompts(
+        self,
+        description: str,
+        url: str,
+        title: str,
+        html_snippet: str,
+        screenshot_available: bool,
+    ) -> Dict[str, str]:
+        """
+        Build system and user prompts for element detection.
+
+        Returns a dict with 'system' and 'user' keys containing the rendered
+        prompt strings.  This replaces the previous PromptManager template
+        lookup with an equivalent inline implementation.
+        """
+        system_prompt = (
+            "You are an expert web automation assistant specializing in precise element identification.\n"
+            "Your task is to identify interactive elements on web pages with high accuracy.\n"
+            "\n"
+            "## Your Capabilities:\n"
+            "- Analyze HTML structure and visual layout\n"
+            "- Understand semantic meaning and context\n"
+            "- Identify the most reliable selectors\n"
+            "- Consider accessibility attributes\n"
+            "- Evaluate element visibility and interactability\n"
+            "\n"
+            "## Analysis Process (Chain-of-Thought):\n"
+            "1. **Visual Analysis**: Examine the screenshot to locate the element visually\n"
+            "2. **HTML Analysis**: Study the HTML structure around the element\n"
+            "3. **Selector Strategy**: Determine the best selector type (ID, class, data-*, aria-*, text content)\n"
+            "4. **Reliability Check**: Assess selector uniqueness and stability\n"
+            "5. **Fallback Options**: Identify alternative selectors if primary fails\n"
+            "\n"
+            "## Output Requirements:\n"
+            "You MUST respond with valid JSON matching this exact structure:\n"
+            '```json\n'
+            '{\n'
+            '  "selector": "string - the primary CSS selector or XPath",\n'
+            '  "selector_type": "css" or "xpath",\n'
+            '  "confidence": 0.0 to 1.0,\n'
+            '  "reasoning": "string - your chain-of-thought analysis",\n'
+            '  "fallback_selectors": [\n'
+            '    {"selector": "string", "type": "css|xpath", "confidence": 0.0-1.0}\n'
+            '  ],\n'
+            '  "element_properties": {\n'
+            '    "tag": "string",\n'
+            '    "visible": boolean,\n'
+            '    "interactive": boolean,\n'
+            '    "aria_label": "string or null"\n'
+            '  }\n'
+            '}\n'
+            '```\n'
+            "\n"
+            "## Best Practices:\n"
+            "- Prefer data-testid, aria-label, or unique IDs when available\n"
+            "- Avoid fragile selectors based on nth-child or complex hierarchies\n"
+            "- Consider text content for buttons and links\n"
+            "- Verify element is visible and interactive\n"
+            "- Provide confidence score based on selector reliability\n"
+            "\n"
+            "## CRITICAL: Invalid CSS Selectors to AVOID\n"
+            "NEVER use these non-standard CSS pseudo-selectors (they cause errors):\n"
+            "- `:contains()` - NOT valid CSS! Use XPath instead: `//element[contains(text(), 'text')]`\n"
+            "- `:has()` with text - Limited browser support\n"
+            "- jQuery-specific selectors\n"
+            "\n"
+            "For text-based matching, ALWAYS prefer:\n"
+            "1. XPath: `//button[contains(text(), 'Click Me')]` or `//a[text()='Link Text']`\n"
+            "2. CSS with attributes: `[aria-label='Button label']` or `[title='tooltip']`\n"
+            "3. Simple class/ID selectors when available\n"
+        )
+
+        user_prompt = (
+            f"## Task\n"
+            f"Find the element matching this description: **{description}**\n"
+            f"\n"
+            f"## Page Context\n"
+            f"- URL: {url}\n"
+            f"- Title: {title}\n"
+            f"\n"
+            f"## HTML Structure (relevant section)\n"
+            f"```html\n"
+            f"{html_snippet}\n"
+            f"```\n"
+        )
+        if screenshot_available:
+            user_prompt += (
+                "\n"
+                "## Visual Context\n"
+                "A screenshot of the page is provided. Use it to visually locate the element.\n"
+            )
+        user_prompt += (
+            "\n"
+            "## Instructions\n"
+            "1. Analyze both the HTML and visual layout\n"
+            "2. Identify the element matching the description\n"
+            "3. Generate the most reliable selector\n"
+            "4. Provide your reasoning and confidence score\n"
+            "5. Include fallback selectors\n"
+            "\n"
+            "Respond with JSON only, no additional text.\n"
+        )
+
+        return {"system": system_prompt, "user": user_prompt}
+
     async def _try_common_patterns(self, description: str) -> Optional[Dict[str, Any]]:
         """
         Try common element patterns before falling back to LLM.

@@ -52,7 +52,7 @@ class PageAnalyzer:
     def __init__(
         self,
         llm_provider: BaseLLMProvider,
-        prompt_manager: PromptManager,
+        prompt_manager: Any,
         config: Optional[PageExplorationConfig] = None,
     ) -> None:
         """
